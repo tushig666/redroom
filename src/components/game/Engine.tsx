@@ -19,6 +19,7 @@ import { WinSystem } from '@/game/systems/WinSystem';
 
 // AAA Visuals
 import { ThreadlingVisuals } from './ThreadlingVisuals';
+import { ClownVisuals } from './ClownVisuals';
 
 export default function Engine() {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -53,6 +54,7 @@ export default function Engine() {
     renderer: THREE.WebGLRenderer;
     roomGroup: THREE.Group;
     monsterVisuals: ThreadlingVisuals;
+    clownVisuals: ClownVisuals;
     redMat: THREE.ShaderMaterial;
     threeCamera: THREE.PerspectiveCamera;
   } | null>(null);
@@ -163,6 +165,9 @@ export default function Engine() {
     const monsterVisuals = new ThreadlingVisuals();
     scene.add(monsterVisuals.group);
 
+    const clownVisuals = new ClownVisuals();
+    scene.add(clownVisuals.group);
+
     const input = new InputManager();
     input.mouse.setElement(containerRef.current);
     const cameraCtrl = new CameraController(threeCamera);
@@ -189,6 +194,13 @@ export default function Engine() {
       // Systems Update
       systems.monster.update(dt, playerCtrl.position, systems.heart.bpm);
       monsterVisuals.update(systems.monster.position, MonsterState[systems.monster.state]);
+
+      // Clown Update (Noise Trap)
+      const isTrap = systems.room.currentRoom.type === RoomType.TRAP;
+      clownVisuals.update(isTrap);
+      if (isTrap) {
+        clownVisuals.group.position.set(0, 1.8, 0); // Position in center of room
+      }
 
       const dist = systems.monster.position.distanceTo(playerCtrl.position);
       const isVisible = systems.monster.state !== MonsterState.HIDDEN;
@@ -223,6 +235,8 @@ export default function Engine() {
         systems.progression.increment();
       } else if (outcome === OpeningOutcome.MONSTER) {
         systems.monster.spawn(new THREE.Vector3(0, 4.5, -5));
+      } else if (outcome === OpeningOutcome.NOISE_TRAP) {
+        // Noise trap room entered - clown will be active
       } else {
         // Hide monster if we leave an encounter area
         systems.monster.hide();
@@ -244,7 +258,7 @@ export default function Engine() {
     };
 
     engineRef.current = { 
-      input, camera: cameraCtrl, player: playerCtrl, loop: gameLoop, scene, renderer, roomGroup, monsterVisuals, redMat, threeCamera
+      input, camera: cameraCtrl, player: playerCtrl, loop: gameLoop, scene, renderer, roomGroup, monsterVisuals, clownVisuals, redMat, threeCamera
     };
     
     refreshRoomVisuals();
