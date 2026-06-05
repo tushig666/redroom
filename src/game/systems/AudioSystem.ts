@@ -1,35 +1,32 @@
 
+'use client';
+
 import * as Tone from 'tone';
 import * as THREE from 'three';
 
 /**
  * AudioSystem.ts
- * Manages spatial horror soundscape using Tone.js.
- * Features:
- * - Distant, filtered background theme.
- * - Spatialized clown laughter for Noise Traps.
- * - Intermittent, distance-based Threadling audio cues.
+ * Centralized audio infrastructure for REDROOM.
+ * Handles local assets, spatial audio, and randomized monster cues.
  */
 
 const AUDIO_CONFIG = {
-  BACKGROUND: "https://www.myinstants.com/media/sounds/the-lobotomy-maebi.mp3",
-  CLOWN: "https://www.myinstants.com/media/sounds/pennywise-laugh-from-it-2017.mp3",
-  THREADLING: "https://www.myinstants.com/media/sounds/see-you.mp3",
+  BACKGROUND: "/audio/background.mp3",
+  CLOWN: "/audio/clown.mp3",
+  THREADLING: "/audio/threadling.mp3",
 };
 
 export class AudioSystem {
-  private bgPlayer!: Tone.Player;
-  private bgFilter!: Tone.Filter;
-  private bgDistort!: Tone.Distortion;
-  private bgReverb!: Tone.Reverb;
+  private bgPlayer: Tone.Player | null = null;
+  private bgFilter: Tone.Filter | null = null;
 
-  private clownPlayer!: Tone.Player;
-  private clownPanner!: Tone.Panner3D;
+  private clownPlayer: Tone.Player | null = null;
+  private clownPanner: Tone.Panner3D | null = null;
 
-  private monsterPlayer!: Tone.Player;
-  private monsterPanner!: Tone.Panner3D;
+  private monsterPlayer: Tone.Player | null = null;
+  private monsterPanner: Tone.Panner3D | null = null;
+
   private monsterTimer: number = 10;
-
   private initialized = false;
   private initializing = false;
 
@@ -38,79 +35,70 @@ export class AudioSystem {
   }
 
   /**
-   * Initializes audio context on first user gesture.
-   * Idempotent and non-blocking.
+   * Initializes audio context and nodes safely on the client.
+   * This must be triggered by a user gesture.
    */
   public async init() {
     if (this.initialized || this.initializing) return;
     this.initializing = true;
     console.log("AUDIO INIT STARTED");
-    
+
     try {
+      // 1. Start the audio context
       await Tone.start();
-      console.log("TONE START SUCCESS");
-      console.log("Tone.context.state:", Tone.context.state);
-      
-      // 1. Background Theme Chain
-      this.bgFilter = new Tone.Filter(1000, "lowpass").toDestination();
-      this.bgDistort = new Tone.Distortion(0.15).connect(this.bgFilter);
-      this.bgReverb = new Tone.Reverb({ decay: 5, wet: 0.4 }).connect(this.bgDistort);
-      
-      console.log("LOADING:", AUDIO_CONFIG.BACKGROUND);
+      console.log("TONE START SUCCESS. Context state:", Tone.context.state);
+
+      // 2. Setup Background Theme (Muffled, distant)
+      this.bgFilter = new Tone.Filter(800, "lowpass").toDestination();
       this.bgPlayer = new Tone.Player({
         url: AUDIO_CONFIG.BACKGROUND,
         loop: true,
-        volume: -15,
-        onload: () => console.log("LOAD SUCCESS:", AUDIO_CONFIG.BACKGROUND),
-        onerror: (err) => console.error("LOAD FAILED:", AUDIO_CONFIG.BACKGROUND, err)
-      }).connect(this.bgReverb);
+        volume: -20,
+        onload: () => {
+          console.log("LOAD SUCCESS: BACKGROUND");
+          if (this.bgPlayer) this.bgPlayer.start();
+        },
+        onerror: () => console.warn("BACKGROUND AUDIO NOT FOUND")
+      }).connect(this.bgFilter);
 
-      // 2. Clown Audio Chain
+      // 3. Setup Clown Audio (Spatialized laughter)
       this.clownPanner = new Tone.Panner3D({
         panningModel: 'HRTF',
-        distanceModel: 'exponential',
-        rolloffFactor: 1.5,
+        rolloffFactor: 2,
         refDistance: 1,
-        maxDistance: 30
+        maxDistance: 20
       }).toDestination();
-      
-      console.log("LOADING:", AUDIO_CONFIG.CLOWN);
       this.clownPlayer = new Tone.Player({
         url: AUDIO_CONFIG.CLOWN,
         loop: true,
         volume: -5,
-        onload: () => console.log("LOAD SUCCESS:", AUDIO_CONFIG.CLOWN),
-        onerror: (err) => console.error("LOAD FAILED:", AUDIO_CONFIG.CLOWN, err)
+        onload: () => console.log("LOAD SUCCESS: CLOWN"),
+        onerror: () => console.warn("CLOWN AUDIO NOT FOUND")
       }).connect(this.clownPanner);
 
-      // 3. Threadling Audio Chain
+      // 4. Setup Threadling Audio (Intermittent spatial cues)
       this.monsterPanner = new Tone.Panner3D({
         panningModel: 'HRTF'
       }).toDestination();
-      
-      console.log("LOADING:", AUDIO_CONFIG.THREADLING);
       this.monsterPlayer = new Tone.Player({
         url: AUDIO_CONFIG.THREADLING,
         loop: false,
         volume: 0,
-        onload: () => console.log("LOAD SUCCESS:", AUDIO_CONFIG.THREADLING),
-        onerror: (err) => console.error("LOAD FAILED:", AUDIO_CONFIG.THREADLING, err)
+        onload: () => console.log("LOAD SUCCESS: THREADLING"),
+        onerror: () => console.warn("THREADLING AUDIO NOT FOUND")
       }).connect(this.monsterPanner);
 
-      // Start background if loaded
-      this.bgPlayer.autostart = true;
-      if (this.bgPlayer.loaded) {
-        this.bgPlayer.start();
-      }
-
       this.initialized = true;
-    } catch (e) {
-      console.warn("[AudioSystem] Failed to start audio context", e);
+    } catch (error) {
+      console.error("AUDIO SYSTEM INIT FAILED:", error);
     } finally {
       this.initializing = false;
     }
   }
 
+  /**
+   * Updates spatial positions and triggers randomized audio events.
+   */
   public update(dt: number, data: {
     isMenu: boolean,
     inTrapRoom: boolean,
@@ -121,64 +109,73 @@ export class AudioSystem {
   }) {
     if (!this.initialized) return;
 
-    // Update Tone.js Listener (The Player)
-    Tone.getContext().listener.set({
-      positionX: data.playerPos.x,
-      positionY: data.playerPos.y,
-      positionZ: data.playerPos.z,
-      forwardX: data.playerDir.x,
-      forwardY: data.playerDir.y,
-      forwardZ: data.playerDir.z,
-      upX: 0,
-      upY: 1,
-      upZ: 0
-    });
-
-    if (data.isMenu) {
-      this.bgFilter.frequency.rampTo(2000, 1);
-      this.bgPlayer.volume.rampTo(-15, 1);
-    } else {
-      this.bgFilter.frequency.rampTo(800, 2);
-      this.bgPlayer.volume.rampTo(-22, 2); 
-    }
-
-    if (data.inTrapRoom) {
-      if (this.clownPlayer.state !== 'started' && this.clownPlayer.loaded) {
-        this.clownPlayer.start();
-      }
-      this.clownPanner.set({
-        positionX: 0,
-        positionY: 1.8,
-        positionZ: 0
+    // A. Sync Listener Position
+    try {
+      Tone.getContext().listener.set({
+        positionX: data.playerPos.x,
+        positionY: data.playerPos.y,
+        positionZ: data.playerPos.z,
+        forwardX: data.playerDir.x,
+        forwardY: data.playerDir.y,
+        forwardZ: data.playerDir.z,
+        upX: 0,
+        upY: 1,
+        upZ: 0
       });
-    } else {
-      if (this.clownPlayer.state === 'started') {
-        this.clownPlayer.stop("+0.5");
+    } catch (e) {
+      // Listener sync failed (unsupported browser or context issues)
+    }
+
+    // B. Background Modulation
+    if (this.bgFilter) {
+      const targetFreq = data.isMenu ? 2000 : 800;
+      this.bgFilter.frequency.rampTo(targetFreq, 2);
+    }
+
+    // C. Noise Trap Room (Clown)
+    if (this.clownPlayer && this.clownPanner && this.clownPlayer.loaded) {
+      if (data.inTrapRoom) {
+        if (this.clownPlayer.state !== 'started') {
+          this.clownPlayer.start();
+        }
+        this.clownPanner.set({
+          positionX: 0,
+          positionY: 1.8,
+          positionZ: 0
+        });
+      } else {
+        if (this.clownPlayer.state === 'started') {
+          this.clownPlayer.stop("+0.5");
+        }
       }
     }
 
-    this.monsterTimer -= dt;
-    if (this.monsterTimer <= 0) {
-      const dist = data.monsterDist;
-      let minInt = 10;
-      let maxInt = 25;
-      if (dist < 12) { minInt = 3; maxInt = 7; }
-      else if (dist < 25) { minInt = 6; maxInt = 15; }
+    // D. Threadling Cues (Intermittent)
+    if (this.monsterPlayer && this.monsterPanner && this.monsterPlayer.loaded) {
+      this.monsterTimer -= dt;
+      if (this.monsterTimer <= 0) {
+        const dist = data.monsterDist;
+        
+        // Define frequency based on proximity
+        let minInt = 10, maxInt = 25;
+        if (dist < 10) { minInt = 3; maxInt = 7; }
+        else if (dist < 25) { minInt = 6; maxInt = 15; }
 
-      this.monsterTimer = Math.random() * (maxInt - minInt) + minInt;
+        this.monsterTimer = Math.random() * (maxInt - minInt) + minInt;
 
-      if (this.monsterPlayer.state !== 'started' && this.monsterPlayer.loaded) {
-        this.monsterPanner.set({
-          positionX: data.monsterPos.x,
-          positionY: data.monsterPos.y,
-          positionZ: data.monsterPos.z
-        });
-        const vol = Math.max(-40, - (dist * 1.0));
-        this.monsterPlayer.volume.value = vol;
-        const currentBgVol = this.bgPlayer.volume.value;
-        this.bgPlayer.volume.rampTo(currentBgVol - 10, 0.1);
-        this.monsterPlayer.start();
-        this.bgPlayer.volume.rampTo(currentBgVol, 3, "+1.5");
+        if (this.monsterPlayer.state !== 'started') {
+          this.monsterPanner.set({
+            positionX: data.monsterPos.x,
+            positionY: data.monsterPos.y,
+            positionZ: data.monsterPos.z
+          });
+          
+          // Apply proximity volume scaling
+          const vol = Math.max(-40, -(dist * 1.5));
+          this.monsterPlayer.volume.value = vol;
+          
+          this.monsterPlayer.start();
+        }
       }
     }
   }
