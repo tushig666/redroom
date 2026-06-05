@@ -67,7 +67,11 @@ export default function Engine() {
       setTimeout(() => setGameState('STATE_PLAYING'), 100);
     }
     if (nextState === 'STATE_DEATH_SEQUENCE') {
-      document.exitPointerLock();
+      try {
+        document.exitPointerLock();
+      } catch (e) {
+        // Silently fail if not locked
+      }
       setIsLocked(false);
     }
   }, []);
@@ -174,7 +178,12 @@ export default function Engine() {
     window.addEventListener('keydown', onKeyDown);
     window.addEventListener('keyup', onKeyUp);
     window.addEventListener('mousemove', onMouseMove);
-    document.addEventListener('pointerlockchange', () => setIsLocked(document.pointerLockElement === containerRef.current));
+    
+    const onPointerLockChange = () => {
+      setIsLocked(document.pointerLockElement === containerRef.current);
+    };
+    
+    document.addEventListener('pointerlockchange', onPointerLockChange);
 
     let lastTime = performance.now();
     const animate = (time: number) => {
@@ -290,6 +299,7 @@ export default function Engine() {
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
       window.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('pointerlockchange', onPointerLockChange);
       renderer.dispose();
     };
   }, [gameState, depth, psychLevel, isLocked, transitionTo]);
@@ -321,11 +331,27 @@ export default function Engine() {
   }, [psychLevel]);
 
   const lockPointer = () => {
+    // Attempt state transition first to ensure game starts regardless of pointer lock success
+    if (gameState === 'STATE_MENU') {
+      transitionTo('STATE_PLAYING');
+    }
+
+    const element = containerRef.current;
+    if (!element) return;
+
     try {
-      containerRef.current?.requestPointerLock();
-      if (gameState === 'STATE_MENU') transitionTo('STATE_PLAYING');
+      // Modern browsers return a promise from requestPointerLock
+      const lockResult = element.requestPointerLock() as any;
+      if (lockResult instanceof Promise) {
+        lockResult.catch((err) => {
+          console.warn("Pointer lock rejected by browser/sandbox:", err);
+          setIsLocked(true); // Fallback to allowing mouse movement without lock
+        });
+      }
     } catch (e) {
-      setIsLocked(true);
+      console.warn("Synchronous pointer lock failure:", e);
+      // If pointer lock is totally blocked (sandbox), we still want to play
+      setIsLocked(true); 
     }
   };
 
