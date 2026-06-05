@@ -18,57 +18,22 @@ const AUDIO_CONFIG = {
 };
 
 export class AudioSystem {
-  private bgPlayer: Tone.Player;
-  private bgFilter: Tone.Filter;
-  private bgDistort: Tone.Distortion;
-  private bgReverb: Tone.Reverb;
+  private bgPlayer!: Tone.Player;
+  private bgFilter!: Tone.Filter;
+  private bgDistort!: Tone.Distortion;
+  private bgReverb!: Tone.Reverb;
 
-  private clownPlayer: Tone.Player;
-  private clownPanner: Tone.Panner3D;
+  private clownPlayer!: Tone.Player;
+  private clownPanner!: Tone.Panner3D;
 
-  private monsterPlayer: Tone.Player;
-  private monsterPanner: Tone.Panner3D;
+  private monsterPlayer!: Tone.Player;
+  private monsterPanner!: Tone.Panner3D;
   private monsterTimer: number = 10;
 
   private initialized = false;
 
   constructor() {
-    // 1. Background Theme Chain (Distant/Muffled)
-    this.bgFilter = new Tone.Filter(1000, "lowpass").toDestination();
-    this.bgDistort = new Tone.Distortion(0.15).connect(this.bgFilter);
-    this.bgReverb = new Tone.Reverb({ decay: 5, wet: 0.4 }).connect(this.bgDistort);
-    
-    this.bgPlayer = new Tone.Player({
-      url: AUDIO_CONFIG.BACKGROUND,
-      loop: true,
-      volume: -15
-    }).connect(this.bgReverb);
-
-    // 2. Clown Audio Chain (Spatialized for Noise Traps)
-    this.clownPanner = new Tone.Panner3D({
-      panningModel: 'HRTF',
-      distanceModel: 'exponential',
-      rolloffFactor: 1.5,
-      refDistance: 1,
-      maxDistance: 30
-    }).toDestination();
-    
-    this.clownPlayer = new Tone.Player({
-      url: AUDIO_CONFIG.CLOWN,
-      loop: true,
-      volume: -5
-    }).connect(this.clownPanner);
-
-    // 3. Threadling Audio Chain (Spatialized / Intermittent)
-    this.monsterPanner = new Tone.Panner3D({
-      panningModel: 'HRTF'
-    }).toDestination();
-    
-    this.monsterPlayer = new Tone.Player({
-      url: AUDIO_CONFIG.THREADLING,
-      loop: false,
-      volume: 0
-    }).connect(this.monsterPanner);
+    // Tone.js nodes are initialized in init() to avoid SSR errors
   }
 
   /**
@@ -78,9 +43,50 @@ export class AudioSystem {
     if (this.initialized) return;
     try {
       await Tone.start();
+      
+      // 1. Background Theme Chain (Distant/Muffled)
+      this.bgFilter = new Tone.Filter(1000, "lowpass").toDestination();
+      this.bgDistort = new Tone.Distortion(0.15).connect(this.bgFilter);
+      this.bgReverb = new Tone.Reverb({ decay: 5, wet: 0.4 }).connect(this.bgDistort);
+      
+      this.bgPlayer = new Tone.Player({
+        url: AUDIO_CONFIG.BACKGROUND,
+        loop: true,
+        volume: -15
+      }).connect(this.bgReverb);
+
+      // 2. Clown Audio Chain (Spatialized for Noise Traps)
+      this.clownPanner = new Tone.Panner3D({
+        panningModel: 'HRTF',
+        distanceModel: 'exponential',
+        rolloffFactor: 1.5,
+        refDistance: 1,
+        maxDistance: 30
+      }).toDestination();
+      
+      this.clownPlayer = new Tone.Player({
+        url: AUDIO_CONFIG.CLOWN,
+        loop: true,
+        volume: -5
+      }).connect(this.clownPanner);
+
+      // 3. Threadling Audio Chain (Spatialized / Intermittent)
+      this.monsterPanner = new Tone.Panner3D({
+        panningModel: 'HRTF'
+      }).toDestination();
+      
+      this.monsterPlayer = new Tone.Player({
+        url: AUDIO_CONFIG.THREADLING,
+        loop: false,
+        volume: 0
+      }).connect(this.monsterPanner);
+
+      // Auto-play background if loaded
+      this.bgPlayer.autostart = true;
       if (this.bgPlayer.loaded) {
         this.bgPlayer.start();
       }
+
       this.initialized = true;
       console.log("[AudioSystem] Spatial Audio Online");
     } catch (e) {
