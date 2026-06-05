@@ -5,10 +5,11 @@ import React, { useEffect, useRef, useState, useCallback } from 'react';
 import * as THREE from 'three';
 import { MatrixRedShader } from './Shaders';
 import * as Tone from 'tone';
+import { pointerLockManager, LockStatus } from '@/systems/PointerLockManager';
 
 // --- CONSTANTS ---
 const ROOM_SIZE = 20;
-const BOUNDARY = 9.4; // Slightly offset for character radius
+const BOUNDARY = 9.4;
 const PLAYER_HEIGHT = 1.7;
 const MOUSE_SENSITIVITY = 0.0025;
 const MOVEMENT_SPEED = 4.5;
@@ -29,7 +30,7 @@ export default function Engine() {
   const containerRef = useRef<HTMLDivElement>(null);
   const [gameState, setGameState] = useState<GameState>('STATE_MENU');
   const [depth, setDepth] = useState(1);
-  const [isLocked, setIsLocked] = useState(false);
+  const [lockStatus, setLockStatus] = useState<LockStatus>(pointerLockManager.getStatus());
 
   // Engine Refs
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
@@ -71,7 +72,6 @@ export default function Engine() {
       setDepth(1);
     }
     
-    // Teleport to center
     playerPos.current.set(0, PLAYER_HEIGHT, 0);
     correctDoorIndex.current = Math.floor(Math.random() * 4);
   };
@@ -99,7 +99,6 @@ export default function Engine() {
     rendererRef.current = renderer;
 
     const buildGeometry = () => {
-      // Monolithic Red Shader
       const redMat = new THREE.ShaderMaterial({
         uniforms: THREE.UniformsUtils.clone(MatrixRedShader.uniforms),
         vertexShader: MatrixRedShader.vertexShader,
@@ -112,7 +111,6 @@ export default function Engine() {
       room.position.set(0, 3, 0);
       scene.add(room);
 
-      // Doors
       const doorCardinalPoints = [
         { cardinal: 'NORTH' as const, pos: [0, 1.4, -9.99], rot: [0, 0, 0] },
         { cardinal: 'SOUTH' as const, pos: [0, 1.4, 9.99], rot: [0, Math.PI, 0] },
@@ -120,7 +118,7 @@ export default function Engine() {
         { cardinal: 'WEST' as const, pos: [-9.99, 1.4, 0], rot: [0, Math.PI / 2, 0] },
       ];
 
-      doorCardinalPoints.forEach((point, i) => {
+      doorCardinalPoints.forEach((point) => {
         const doorGeo = new THREE.PlaneGeometry(2.5, 3.5);
         const doorMat = new THREE.ShaderMaterial({
           uniforms: { ...THREE.UniformsUtils.clone(MatrixRedShader.uniforms), u_IsDoor: { value: true } },
@@ -135,7 +133,7 @@ export default function Engine() {
         doorsRef.current.push({
           mesh: doorMesh,
           cardinal: point.cardinal,
-          isCorrect: false, // Calculated per logic pass
+          isCorrect: false,
           position: new THREE.Vector3(point.pos[0], point.pos[1], point.pos[2])
         });
       });
@@ -143,23 +141,31 @@ export default function Engine() {
 
     buildGeometry();
 
-    // Event Listeners
     const onKeyDown = (e: KeyboardEvent) => { if (keyStates.current.hasOwnProperty(e.code)) keyStates.current[e.code] = true; };
     const onKeyUp = (e: KeyboardEvent) => { if (keyStates.current.hasOwnProperty(e.code)) keyStates.current[e.code] = false; };
+    
     const onMouseMove = (e: MouseEvent) => {
-      if (!isLocked) return;
-      yaw.current -= e.movementX * MOUSE_SENSITIVITY;
-      pitch.current -= e.movementY * MOUSE_SENSITIVITY;
+      const currentStatus = pointerLockManager.getStatus();
+      if (currentStatus.mode === 'DISABLED') return;
+
+      const deltas = pointerLockManager.getDeltas(e);
+      yaw.current -= deltas.x * MOUSE_SENSITIVITY;
+      pitch.current -= deltas.y * MOUSE_SENSITIVITY;
       pitch.current = Math.max(-Math.PI / 2 + 0.1, Math.min(Math.PI / 2 - 0.1, pitch.current));
     };
 
-    const onClick = () => {
-      if (!isLocked) {
-        lockPointer();
+    const onClick = async () => {
+      const status = pointerLockManager.getStatus();
+      
+      if (status.mode === 'DISABLED') {
+        if (containerRef.current) {
+          const newStatus = await pointerLockManager.requestLock(containerRef.current);
+          setLockStatus(newStatus);
+          if (gameState === 'STATE_MENU') transitionTo('STATE_PLAYING');
+        }
         return;
       }
       
-      // Interaction Raycast
       const raycaster = new THREE.Raycaster();
       raycaster.setFromCamera({ x: 0, y: 0 }, camera);
       const intersects = raycaster.intersectObjects(doorsRef.current.map(d => d.mesh));
@@ -182,7 +188,11 @@ export default function Engine() {
     window.addEventListener('mousedown', onClick);
     
     const onPointerLockChange = () => {
-      setIsLocked(document.pointerLockElement === containerRef.current);
+      const isLocked = document.pointerLockElement === containerRef.current;
+      if (!isLocked && pointerLockManager.getStatus().mode === 'LOCKED') {
+        pointerLockManager.releaseLock();
+        setLockStatus(pointerLockManager.getStatus());
+      }
     };
     document.addEventListener('pointerlockchange', onPointerLockChange);
 
@@ -193,7 +203,6 @@ export default function Engine() {
       totalElapsedTime.current += dt;
 
       if (gameState === 'STATE_PLAYING') {
-        // --- 1. KINEMATIC INTEGRATION ---
         const forward = new THREE.Vector3(Math.sin(yaw.current), 0, Math.cos(yaw.current)).normalize();
         const right = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), forward).normalize();
         
@@ -208,7 +217,6 @@ export default function Engine() {
           playerPos.current.add(moveVec);
         }
 
-        // --- 2. COLLISION BOUNDING ---
         playerPos.current.x = Math.max(-BOUNDARY, Math.min(BOUNDARY, playerPos.current.x));
         playerPos.current.z = Math.max(-BOUNDARY, Math.min(BOUNDARY, playerPos.current.z));
         playerPos.current.y = PLAYER_HEIGHT;
@@ -217,7 +225,6 @@ export default function Engine() {
         camera.rotation.set(pitch.current, yaw.current, 0, 'YXZ');
       }
 
-      // --- 3. UNIFORM STATE UPDATES ---
       const isDepth5 = depth >= 5 || gameState === 'STATE_WIN_SEQUENCE';
       const clearColor = isDepth5 ? 0xffffff : 0xff0000;
       renderer.setClearColor(clearColor);
@@ -243,9 +250,8 @@ export default function Engine() {
       document.removeEventListener('pointerlockchange', onPointerLockChange);
       renderer.dispose();
     };
-  }, [gameState, isLocked]);
+  }, [gameState]);
 
-  // --- AUDIO SYNTHESIS ---
   useEffect(() => {
     const initAudio = async () => {
       await Tone.start();
@@ -268,11 +274,6 @@ export default function Engine() {
     return () => { Tone.Transport.stop(); };
   }, [gameState]);
 
-  const lockPointer = () => {
-    if (gameState === 'STATE_MENU') transitionTo('STATE_PLAYING');
-    containerRef.current?.requestPointerLock();
-  };
-
   return (
     <div ref={containerRef} className="w-full h-full relative cursor-crosshair">
       <div className="absolute top-12 left-12 mix-blend-difference pointer-events-none opacity-80 z-50">
@@ -282,9 +283,15 @@ export default function Engine() {
         <div className="font-mono text-xs space-y-0.5 uppercase">
           <p>DEPTH: {depth.toString().padStart(3, '0')}</p>
           <p>SIGNAL: {gameState === 'STATE_WIN_SEQUENCE' ? 'LOST' : 'PURE'}</p>
-          <p>STATUS: {isLocked ? 'LOCKED' : 'AWAITING LOCK'}</p>
+          <p>STATUS: {lockStatus.mode === 'LOCKED' ? 'HARDWARE LOCKED' : lockStatus.mode === 'FALLBACK' ? 'FALLBACK ACTIVE' : 'AWAITING INPUT'}</p>
         </div>
       </div>
+
+      {lockStatus.mode === 'FALLBACK' && (
+        <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-primary px-4 py-2 font-mono text-[10px] text-white z-[6000] border-2 border-white animate-pulse">
+          PREVIEW ENVIRONMENT DETECTED — RUNNING IN MOUSE CAPTURE FALLBACK MODE
+        </div>
+      )}
 
       {gameState === 'STATE_MENU' && (
         <div className="absolute inset-0 flex items-center justify-center bg-[#ff0000] z-[5000]">
@@ -310,10 +317,7 @@ export default function Engine() {
         </div>
       )}
 
-      {/* Crosshair */}
       <div className="absolute top-1/2 left-1/2 w-1 h-1 bg-white rounded-full -translate-x-1/2 -translate-y-1/2 mix-blend-difference pointer-events-none z-40" />
-      
-      {/* Red Grain Overlay */}
       <div className="horror-noise opacity-10" />
     </div>
   );
