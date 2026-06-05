@@ -106,9 +106,25 @@ const dynamicHorrorSoundscapeFlow = ai.defineFlow(
     inputSchema: DynamicHorrorSoundscapeInputSchema,
     outputSchema: DynamicHorrorSoundscapeOutputSchema,
   },
-  async input => {
-    const {output} = await prompt(input);
-    return output!;
+  async (input) => {
+    try {
+      const {output} = await prompt(input);
+      return output!;
+    } catch (error) {
+      console.warn('Genkit quota exceeded or AI error. Falling back to deterministic soundscape.', error);
+      // Deterministic fallback based on inputs
+      const p = input.psychologicalState;
+      const d = input.dangerProximity;
+      return {
+        breathingRateHz: 0.5 + p * 2.0,
+        breathingVolume: 0.1 + p * 0.5,
+        heartbeatRateBPM: 60 + p * 100,
+        heartbeatVolume: 0.2 + p * 0.6,
+        droneFrequencyHz: 100 - d * 40,
+        droneVolume: 0.3 + d * 0.4,
+        effectDescription: 'Fallback soundscape active due to high cognitive load (Rate Limit).',
+      };
+    }
   }
 );
 

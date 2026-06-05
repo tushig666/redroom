@@ -130,7 +130,19 @@ const adaptiveThreadlingAIFlow = ai.defineFlow(
     outputSchema: ThreadlingAIOutputSchema,
   },
   async (input) => {
-    const {output} = await threadlingAIPrompt(input);
-    return output!;
+    try {
+      const {output} = await threadlingAIPrompt(input);
+      return output!;
+    } catch (error) {
+      console.warn('Genkit quota exceeded or AI error. Falling back to instinctual AI.', error);
+      // Basic fallback logic: head toward the last known location or just stalk
+      return {
+        nextAction: input.hasLineOfSightToPlayer ? 'pursuePlayer' : 'stalk',
+        targetCoordinates: input.playerLastKnownLocation || { x: 0, y: 1.7, z: -10 },
+        movementStyle: 'stealthyCrawl',
+        reactionIntensity: 0.3,
+        tacticalAdvice: 'Instinctual movement active (AI Quota Reached).',
+      };
+    }
   }
 );

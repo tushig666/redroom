@@ -22,7 +22,6 @@ export function AIThreadling({ scene, playerPos }: AIThreadlingProps) {
     const body = new THREE.Mesh(bodyGeo, bodyMat);
     group.add(body);
 
-    // Tentacles / Legs (Simple representation for now)
     for(let i=0; i<8; i++) {
         const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 1.5), bodyMat);
         leg.rotation.z = Math.random() * Math.PI;
@@ -37,25 +36,31 @@ export function AIThreadling({ scene, playerPos }: AIThreadlingProps) {
     const updateAI = async () => {
       if (!meshRef.current) return;
 
-      const aiDecision = await adaptThreadlingAI({
-        threadlingCurrentPosition: { x: group.position.x, y: group.position.y, z: group.position.z },
-        threadlingCurrentOrientation: { x: group.rotation.x, y: group.rotation.y, z: group.rotation.z },
-        threadlingAwarenessLevel: intensity.current > 0.5 ? 'pursuing' : 'alerted',
-        hasLineOfSightToPlayer: true,
-        playerLastKnownLocation: { x: playerPos.x, y: playerPos.y, z: playerPos.z }
-      });
+      try {
+        const aiDecision = await adaptThreadlingAI({
+          threadlingCurrentPosition: { x: group.position.x, y: group.position.y, z: group.position.z },
+          threadlingCurrentOrientation: { x: group.rotation.x, y: group.rotation.y, z: group.rotation.z },
+          threadlingAwarenessLevel: intensity.current > 0.5 ? 'pursuing' : 'alerted',
+          hasLineOfSightToPlayer: true,
+          playerLastKnownLocation: { x: playerPos.x, y: playerPos.y, z: playerPos.z }
+        });
 
-      if (aiDecision.targetCoordinates) {
-        targetPos.current.set(
-            aiDecision.targetCoordinates.x,
-            aiDecision.targetCoordinates.y,
-            aiDecision.targetCoordinates.z
-        );
+        if (aiDecision.targetCoordinates) {
+          targetPos.current.set(
+              aiDecision.targetCoordinates.x,
+              aiDecision.targetCoordinates.y,
+              aiDecision.targetCoordinates.z
+          );
+        }
+        intensity.current = aiDecision.reactionIntensity;
+      } catch (err) {
+        console.warn('Threadling AI update throttled', err);
       }
-      intensity.current = aiDecision.reactionIntensity;
     };
 
-    const interval = setInterval(updateAI, 3000);
+    // Reduced frequency to once every 30 seconds to stay within free tier limits
+    const interval = setInterval(updateAI, 30000);
+    updateAI();
     return () => clearInterval(interval);
   }, [scene, playerPos]);
 

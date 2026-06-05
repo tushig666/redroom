@@ -5,11 +5,9 @@ import * as THREE from 'three';
 import { FleshShader } from './Shaders';
 import { useToast } from '@/hooks/use-toast';
 import { generateDynamicHorrorSoundscape } from '@/ai/flows/dynamic-horror-soundscape';
-import { adaptThreadlingAI } from '@/ai/flows/adaptive-threadling-ai';
 import * as Tone from 'tone';
 
 const ROOM_SIZE = 10;
-const INFINITE_DEPTH = 100;
 
 export default function Engine() {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -18,7 +16,6 @@ export default function Engine() {
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const playerRef = useRef<THREE.Group | null>(null);
   const roomsRef = useRef<THREE.Group[]>([]);
-  const { toast } = useToast();
 
   const [psychLevel, setPsychLevel] = useState(0.1);
   const [depth, setDepth] = useState(0);
@@ -26,17 +23,14 @@ export default function Engine() {
 
   // Audio refs
   const droneRef = useRef<Tone.Oscillator | null>(null);
-  const heartbeatRef = useRef<Tone.Player | null>(null);
 
   // Movement state
   const moveState = useRef({ forward: false, backward: false, left: false, right: false });
-  const mouseMove = useRef({ x: 0, y: 0 });
   const euler = useRef(new THREE.Euler(0, 0, 0, 'YXZ'));
 
   useEffect(() => {
     if (!containerRef.current) return;
 
-    // 1. Scene Setup
     const scene = new THREE.Scene();
     scene.fog = new THREE.FogExp2(0x1d1717, 0.15);
     sceneRef.current = scene;
@@ -57,7 +51,6 @@ export default function Engine() {
     containerRef.current.appendChild(renderer.domElement);
     rendererRef.current = renderer;
 
-    // 2. Room Generation Logic
     const createRoom = (zOffset: number) => {
       const group = new THREE.Group();
       const fleshMat = new THREE.ShaderMaterial({
@@ -72,7 +65,6 @@ export default function Engine() {
       room.position.set(0, 2, 0);
       group.add(room);
 
-      // Recursive Depth Doors
       const doorGeo = new THREE.PlaneGeometry(1.5, 2.5);
       const doorMat = new THREE.MeshBasicMaterial({ color: 0x000000 });
       const door = new THREE.Mesh(doorGeo, doorMat);
@@ -84,12 +76,10 @@ export default function Engine() {
       return group;
     };
 
-    // Initialize initial corridor
     for (let i = 0; i < 3; i++) {
       roomsRef.current.push(createRoom(-i * ROOM_SIZE));
     }
 
-    // 3. Hardware Tracking & Input
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.code === 'KeyW') moveState.current.forward = true;
       if (e.code === 'KeyS') moveState.current.backward = true;
@@ -107,8 +97,6 @@ export default function Engine() {
     const handleMouseMove = (e: MouseEvent) => {
       if (!isLocked) return;
       const sensitivity = 0.002;
-      // Use movementX/Y which works best with pointer lock, 
-      // but also works in most modern browsers even without it.
       euler.current.y -= e.movementX * sensitivity;
       euler.current.x -= e.movementY * sensitivity;
       euler.current.x = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, euler.current.x));
@@ -124,14 +112,12 @@ export default function Engine() {
     window.addEventListener('mousemove', handleMouseMove);
     document.addEventListener('pointerlockchange', handlePointerLockChange);
 
-    // 4. Animation Loop
     let lastTime = performance.now();
     let bobTime = 0;
     const animate = (time: number) => {
       const delta = (time - lastTime) / 1000;
       lastTime = time;
 
-      // Movement Physics
       const velocity = 3.5;
       const direction = new THREE.Vector3();
       if (moveState.current.forward) direction.z -= 1;
@@ -143,7 +129,6 @@ export default function Engine() {
       const moveVec = direction.applyQuaternion(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), euler.current.y));
       player.position.addScaledVector(moveVec, velocity * delta);
 
-      // Head Bob
       if (direction.length() > 0) {
         bobTime += delta * 12;
         camera.position.y = Math.sin(bobTime) * 0.05;
@@ -153,20 +138,17 @@ export default function Engine() {
         camera.position.x = THREE.MathUtils.lerp(camera.position.x, 0, 0.1);
       }
 
-      // Recursive depth orchestration
       if (player.position.z < roomsRef.current[1].position.z) {
         setDepth(d => d + 1);
         const oldRoom = roomsRef.current.shift()!;
         oldRoom.position.z -= roomsRef.current.length * ROOM_SIZE;
         roomsRef.current.push(oldRoom);
         
-        // Perceptual Disorientation: Subtle room changes
         if (Math.random() > 0.7) {
           setPsychLevel(p => Math.min(1, p + 0.05));
         }
       }
 
-      // Update shaders
       scene.traverse((obj) => {
         if (obj instanceof THREE.Mesh && obj.material instanceof THREE.ShaderMaterial) {
           obj.material.uniforms.uTime.value = time / 1000;
@@ -189,7 +171,7 @@ export default function Engine() {
     };
   }, [isLocked, psychLevel]);
 
-  // Audio Integration with GenAI
+  // Audio Integration with GenAI - SIGNIFICANTLY reduced frequency to save quota
   useEffect(() => {
     const initAudio = async () => {
       await Tone.start();
@@ -206,35 +188,34 @@ export default function Engine() {
           psychologicalState: psychLevel
         });
         if (droneRef.current) {
-          droneRef.current.frequency.rampTo(soundParams.droneFrequencyHz, 2);
-          droneRef.current.volume.rampTo(Tone.gainToDb(soundParams.droneVolume * 0.5), 2);
+          droneRef.current.frequency.rampTo(soundParams.droneFrequencyHz, 5);
+          droneRef.current.volume.rampTo(Tone.gainToDb(soundParams.droneVolume * 0.5), 5);
         }
       } catch (e) {
         console.error("Audio update failed", e);
       }
     };
 
-    const interval = setInterval(updateAudio, 5000);
+    // Update every 20 seconds instead of 5 to avoid quota exhaustion
+    const interval = setInterval(updateAudio, 20000);
+    updateAudio(); // Initial call
     return () => clearInterval(interval);
   }, [psychLevel]);
 
   const lockPointer = () => {
     try {
-      // In sandboxed environments, requestPointerLock might be blocked.
-      // We wrap it in a try-catch to avoid crashing the app.
       const element = containerRef.current;
       if (element) {
         const promise = element.requestPointerLock();
-        // Newer browsers return a promise that rejects if the lock fails
         if (promise && typeof promise.catch === 'function') {
           promise.catch(() => {
-            // If the promise fails, we still "unlock" the game UI for the prototype
             setIsLocked(true);
           });
+        } else {
+          setIsLocked(true);
         }
       }
     } catch (e) {
-      // Fallback for sandboxed frames that don't allow pointer lock
       setIsLocked(true);
     }
   };
@@ -244,7 +225,6 @@ export default function Engine() {
       <div id="crosshair" />
       <div className="horror-noise" />
       
-      {/* HUD Overlay */}
       <div className="absolute top-8 left-8 mix-blend-difference opacity-70 pointer-events-none">
         <h1 className="font-headline text-2xl tracking-tighter text-primary uppercase">
           REDROOM: THE LAST EXIT
@@ -265,7 +245,6 @@ export default function Engine() {
         </div>
       )}
 
-      {/* Screen Effects */}
       <div className="absolute inset-0 pointer-events-none z-[1500] border-[40px] border-black/20" />
       <div 
         className="absolute inset-0 pointer-events-none z-[1501] opacity-20 bg-gradient-to-t from-primary/10 via-transparent to-primary/5"
