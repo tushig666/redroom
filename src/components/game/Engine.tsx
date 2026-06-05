@@ -1,3 +1,4 @@
+
 "use client";
 
 import React, { useEffect, useRef, useState } from 'react';
@@ -9,7 +10,7 @@ import { PlayerController } from '@/game/player/PlayerController';
 import { GameLoop } from '@/game/core/GameLoop';
 
 // Systems
-import { RoomSystem, RoomType, DoorOutcome } from '@/game/systems/RoomSystem';
+import { RoomSystem, RoomType, DoorOutcome, RoomConfig } from '@/game/systems/RoomSystem';
 import { ProgressionSystem } from '@/game/systems/ProgressionSystem';
 import { MonsterSystem, MonsterState } from '@/game/systems/MonsterSystem';
 import { HeartRateSystem } from '@/game/systems/HeartRateSystem';
@@ -24,7 +25,10 @@ export default function Engine() {
     progress: 'ROOM 1/6', 
     bpm: 70, 
     deathReason: '',
-    monsterState: 'HIDDEN'
+    monsterState: 'HIDDEN',
+    roomId: '',
+    roomType: '',
+    parentId: ''
   });
 
   // System Refs
@@ -127,7 +131,10 @@ export default function Engine() {
         progress: systems.progression.progressString,
         bpm: Math.round(systems.heart.bpm),
         deathReason: systems.death.deathReason,
-        monsterState: MonsterState[systems.monster.state]
+        monsterState: MonsterState[systems.monster.state],
+        roomId: systems.room.currentRoom.id,
+        roomType: RoomType[systems.room.currentRoom.type],
+        parentId: systems.room.currentRoom.parent?.id || 'NONE'
       });
     });
 
@@ -202,18 +209,20 @@ export default function Engine() {
       return;
     }
 
-    const outcome = systems.door.checkInteraction(
+    const interaction = systems.door.checkInteraction(
       engineRef.current.player.position,
       engineRef.current.camera.getDirection(),
       systems.room.currentRoom.doorOutcomes
     );
 
-    if (outcome !== null) {
-      processDoorOutcome(outcome);
+    if (interaction !== null) {
+      processDoorOutcome(interaction.outcome, interaction.key);
     }
   };
 
-  const processDoorOutcome = (outcome: DoorOutcome) => {
+  const processDoorOutcome = (outcome: DoorOutcome, directionKey: string) => {
+    const prevRoom = systems.room.currentRoom;
+
     switch (outcome) {
       case DoorOutcome.CORRECT:
         systems.progression.increment();
@@ -221,40 +230,51 @@ export default function Engine() {
           systems.win.trigger();
           setGameState('WON');
         } else {
-          systems.room.currentRoom = systems.room.generateMainRoom();
-          resetPlayer();
+          systems.room.currentRoom = systems.room.generateMainRoom(prevRoom, systems.progression.currentRoomProgress);
+          resetPlayer(directionKey);
         }
         break;
       case DoorOutcome.DEAD_END:
-        systems.room.currentRoom = systems.room.generateDeadEndRoom();
-        resetPlayer();
+        systems.room.currentRoom = systems.room.generateDeadEndRoom(prevRoom);
+        resetPlayer(directionKey);
         break;
       case DoorOutcome.MONSTER:
-        console.log("MONSTER ROOM TRIGGERED");
-        systems.room.currentRoom = systems.room.generateMainRoom(); // Placeholder transition
+        systems.room.currentRoom = systems.room.generateMonsterRoom(prevRoom);
         systems.monster.spawn(new THREE.Vector3(0, 1.7, -5));
         systems.monster.triggerHunt(engineRef.current!.player.position);
-        resetPlayer();
+        resetPlayer(directionKey);
         break;
       case DoorOutcome.NOISE_TRAP:
-        console.log("NOISE TRAP TRIGGERED");
-        systems.room.currentRoom = systems.room.generateTrapRoom();
+        systems.room.currentRoom = systems.room.generateTrapRoom(prevRoom);
         systems.monster.spawn(new THREE.Vector3(0, 1.7, -15));
-        resetPlayer();
+        resetPlayer(directionKey);
         break;
       case DoorOutcome.EXIT_BACK:
-        systems.room.currentRoom = systems.room.generateMainRoom();
-        resetPlayer();
+        if (prevRoom.parent) {
+          systems.room.currentRoom = prevRoom.parent;
+          systems.progression.currentRoomProgress = prevRoom.parent.progressAtCreation;
+        }
+        resetPlayer(directionKey);
         break;
     }
     buildRoomVisuals();
   };
 
-  const resetPlayer = () => {
-    if (engineRef.current) {
-      engineRef.current.player.position.set(0, 1.7, 5);
-      systems.monster.hide();
-    }
+  const resetPlayer = (directionKey: string) => {
+    if (!engineRef.current) return;
+    
+    const player = engineRef.current.player;
+    const spawnDist = 6.0; // Units away from the wall
+
+    // Reset to center then offset based on the door used
+    player.position.set(0, 1.7, 0);
+
+    if (directionKey === 'north') player.position.z = -spawnDist;
+    if (directionKey === 'south') player.position.z = spawnDist;
+    if (directionKey === 'east') player.position.x = spawnDist;
+    if (directionKey === 'west') player.position.x = -spawnDist;
+
+    systems.monster.hide();
   };
 
   return (
@@ -266,7 +286,9 @@ export default function Engine() {
       {/* DEBUG OVERLAY */}
       {gameState === 'PLAYING' && (
         <div className="absolute top-4 left-1/2 -translate-x-1/2 font-mono text-[10px] text-red-500 bg-black/50 p-2 pointer-events-none text-center z-[60]">
-          DEBUG: N: {DoorOutcome[systems.room.currentRoom.doorOutcomes.north ?? -1]} | 
+          ID: {uiData.roomId} | TYPE: {uiData.roomType} | PROG: {uiData.progress} | PARENT: {uiData.parentId}
+          <br/>
+          DEBUG PATHS: N: {DoorOutcome[systems.room.currentRoom.doorOutcomes.north ?? -1]} | 
           S: {DoorOutcome[systems.room.currentRoom.doorOutcomes.south ?? -1]} | 
           E: {DoorOutcome[systems.room.currentRoom.doorOutcomes.east ?? -1]} | 
           W: {DoorOutcome[systems.room.currentRoom.doorOutcomes.west ?? -1]}

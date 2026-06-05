@@ -1,3 +1,4 @@
+
 import * as THREE from 'three';
 import { DoorOutcome } from './RoomSystem';
 
@@ -6,13 +7,13 @@ import { DoorOutcome } from './RoomSystem';
  * Logic for handling door interactions.
  */
 export class DoorSystem {
-  private readonly INTERACT_DIST = 3.5;
+  private readonly INTERACT_DIST = 3.5; // Forgiving distance
 
   public checkInteraction(
     playerPos: THREE.Vector3, 
     lookDir: THREE.Vector3, 
     outcomes: { [key: string]: DoorOutcome | undefined }
-  ): DoorOutcome | null {
+  ): { outcome: DoorOutcome, key: string } | null {
     // Doors are at cardinal points: N(0, 0, -9.5), S(0, 0, 9.5), E(9.5, 0, 0), W(-9.5, 0, 0)
     const doorPositions = {
       north: new THREE.Vector3(0, 1.7, -9.5),
@@ -27,10 +28,10 @@ export class DoorSystem {
 
       const dist = playerPos.distanceTo(pos);
       if (dist < this.INTERACT_DIST) {
-        // Simple dot product check to see if we're looking at it
+        // Dot product check to ensure the player is facing the door
         const toDoor = new THREE.Vector3().subVectors(pos, playerPos).normalize();
-        if (lookDir.dot(toDoor) > 0.8) {
-          return outcome;
+        if (lookDir.dot(toDoor) > 0.6) {
+          return { outcome, key };
         }
       }
     }

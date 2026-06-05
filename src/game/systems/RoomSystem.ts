@@ -1,12 +1,13 @@
 
 /**
  * RoomSystem.ts
- * Manages the configuration and randomization of the red rooms.
+ * Manages the configuration and randomization of the red rooms with history support.
  */
 export enum RoomType {
   MAIN,
   DEAD_END,
   TRAP,
+  MONSTER,
   FINAL
 }
 
@@ -19,7 +20,10 @@ export enum DoorOutcome {
 }
 
 export interface RoomConfig {
+  id: string;
   type: RoomType;
+  parent?: RoomConfig;
+  progressAtCreation: number;
   doorOutcomes: {
     north?: DoorOutcome;
     south?: DoorOutcome;
@@ -30,13 +34,16 @@ export interface RoomConfig {
 
 export class RoomSystem {
   public currentRoom: RoomConfig;
-  private lastMainRoomOutcomes: DoorOutcome[] = [];
 
   constructor() {
     this.currentRoom = this.generateMainRoom();
   }
 
-  public generateMainRoom(): RoomConfig {
+  private generateId(): string {
+    return Math.random().toString(36).substring(2, 9).toUpperCase();
+  }
+
+  public generateMainRoom(parent?: RoomConfig, progress: number = 1): RoomConfig {
     const outcomes: DoorOutcome[] = [
       DoorOutcome.CORRECT,
       DoorOutcome.DEAD_END,
@@ -51,7 +58,10 @@ export class RoomSystem {
     }
 
     return {
+      id: `MAIN-${this.generateId()}`,
       type: RoomType.MAIN,
+      parent: parent,
+      progressAtCreation: progress,
       doorOutcomes: {
         north: outcomes[0],
         south: outcomes[1],
@@ -61,18 +71,36 @@ export class RoomSystem {
     };
   }
 
-  public generateDeadEndRoom(): RoomConfig {
+  public generateDeadEndRoom(parent: RoomConfig): RoomConfig {
     return {
+      id: `DEAD-${this.generateId()}`,
       type: RoomType.DEAD_END,
+      parent: parent,
+      progressAtCreation: parent.progressAtCreation,
       doorOutcomes: {
-        south: DoorOutcome.EXIT_BACK // Only the door you came in through
+        south: DoorOutcome.EXIT_BACK
       }
     };
   }
 
-  public generateTrapRoom(): RoomConfig {
+  public generateTrapRoom(parent: RoomConfig): RoomConfig {
     return {
+      id: `TRAP-${this.generateId()}`,
       type: RoomType.TRAP,
+      parent: parent,
+      progressAtCreation: parent.progressAtCreation,
+      doorOutcomes: {
+        south: DoorOutcome.EXIT_BACK
+      }
+    };
+  }
+
+  public generateMonsterRoom(parent: RoomConfig): RoomConfig {
+    return {
+      id: `MONST-${this.generateId()}`,
+      type: RoomType.MONSTER,
+      parent: parent,
+      progressAtCreation: parent.progressAtCreation,
       doorOutcomes: {
         south: DoorOutcome.EXIT_BACK
       }
@@ -81,7 +109,9 @@ export class RoomSystem {
 
   public generateFinalRoom(): RoomConfig {
     return {
+      id: `FINAL`,
       type: RoomType.FINAL,
+      progressAtCreation: 6,
       doorOutcomes: {}
     };
   }
