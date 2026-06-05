@@ -58,7 +58,6 @@ export default function Engine() {
     threeCamera: THREE.PerspectiveCamera;
   } | null>(null);
 
-  // Helper to build a single room mesh group
   const createRoomMeshes = (config: any, xOffset: number, zOffset: number) => {
     const group = new THREE.Group();
     group.position.set(xOffset, 0, zOffset);
@@ -75,7 +74,6 @@ export default function Engine() {
     mat.uniforms.u_IsWin.value = isWhite;
     mat.uniforms.u_DepthLevel.value = config.progressAtCreation;
 
-    // Floor & Ceiling
     const floor = new THREE.Mesh(new THREE.PlaneGeometry(20, 20), mat);
     floor.rotation.x = -Math.PI / 2;
     group.add(floor);
@@ -85,13 +83,12 @@ export default function Engine() {
     ceil.position.y = 6;
     group.add(ceil);
 
-    // Wall Panels
     const buildWall = (dir: string, outcome: OpeningOutcome) => {
       const wallGroup = new THREE.Group();
-      if (dir === 'north') { wallGroup.position.z = -10; }
-      if (dir === 'south') { wallGroup.position.z = 10; wallGroup.rotation.y = Math.PI; }
-      if (dir === 'east') { wallGroup.position.x = 10; wallGroup.rotation.y = -Math.PI / 2; }
-      if (dir === 'west') { wallGroup.position.x = -10; wallGroup.rotation.y = Math.PI / 2; }
+      if (dir === 'north') wallGroup.position.set(0, 0, -10);
+      if (dir === 'south') { wallGroup.position.set(0, 0, 10); wallGroup.rotation.y = Math.PI; }
+      if (dir === 'east') { wallGroup.position.set(10, 0, 0); wallGroup.rotation.y = -Math.PI / 2; }
+      if (dir === 'west') { wallGroup.position.set(-10, 0, 0); wallGroup.rotation.y = Math.PI / 2; }
 
       if (outcome === OpeningOutcome.NONE) {
         const fullWall = new THREE.Mesh(new THREE.PlaneGeometry(20, 6), mat);
@@ -132,6 +129,7 @@ export default function Engine() {
     const cur = room.currentRoom;
     engineRef.current.roomGroup.add(createRoomMeshes(cur, 0, 0));
     
+    // Only render neighbor rooms if an opening exists
     if (cur.outcomes.north !== OpeningOutcome.NONE) 
       engineRef.current.roomGroup.add(createRoomMeshes(room.getOrCreateRoom(cur.x, cur.z - 1, cur.progressAtCreation, cur), 0, -20));
     if (cur.outcomes.south !== OpeningOutcome.NONE) 
@@ -176,30 +174,27 @@ export default function Engine() {
       if (systems.death.isDead) { setGameState('DEAD'); return; }
       if (systems.win.hasWon) { setGameState('WON'); return; }
 
-      // 1. Boundary Streaming
+      // Boundary Streaming Transitions
       if (playerCtrl.position.z < -10) handleTransition('north');
       else if (playerCtrl.position.z > 10) handleTransition('south');
       else if (playerCtrl.position.x > 10) handleTransition('east');
       else if (playerCtrl.position.x < -10) handleTransition('west');
 
-      // 2. FOV & Camera Bob Updates
+      // Update Camera & Bob
       const isSprinting = playerCtrl.movementState === 'SPRINT';
-      const targetFov = isSprinting ? 82 : 75;
-      threeCamera.fov = THREE.MathUtils.lerp(threeCamera.fov, targetFov, 0.1);
+      threeCamera.fov = THREE.MathUtils.lerp(threeCamera.fov, isSprinting ? 82 : 75, 0.1);
       threeCamera.updateProjectionMatrix();
 
       const moveSpeed = new THREE.Vector2(playerCtrl.velocity.x, playerCtrl.velocity.z).length();
-      const bobFreq = isSprinting ? 12 : 8;
-      const bobAmount = isSprinting ? 0.08 : 0.05;
-      const bob = Math.sin(Date.now() * 0.001 * bobFreq) * bobAmount * (moveSpeed / 5);
+      const bob = Math.sin(Date.now() * 0.001 * (isSprinting ? 12 : 8)) * (isSprinting ? 0.08 : 0.05) * (moveSpeed / 5);
       
-      // 3. Systems Update
+      // Systems Update
       systems.monster.update(dt, playerCtrl.position, systems.heart.bpm);
       monsterVisuals.update(systems.monster.position, MonsterState[systems.monster.state]);
 
       const dist = systems.monster.position.distanceTo(playerCtrl.position);
-      const isVisible = systems.monster.state !== MonsterState.HIDDEN && dist < 15;
-      systems.heart.update(dt, systems.monster.state !== MonsterState.HIDDEN ? Math.max(0, 1 - (dist / 18)) : 0, isVisible);
+      const isVisible = systems.monster.state !== MonsterState.HIDDEN && dist < 12;
+      systems.heart.update(dt, systems.monster.state !== MonsterState.HIDDEN ? Math.max(0, 1 - (dist / 15)) : 0, isVisible);
       
       if (systems.heart.isHeartFailure) systems.death.trigger("HEART FAILURE");
       if (dist < 1.2 && systems.monster.state !== MonsterState.HIDDEN) systems.death.trigger("YOU WERE CONSUMED");
@@ -225,18 +220,20 @@ export default function Engine() {
       const prevRoom = systems.room.currentRoom;
       const outcome = prevRoom.outcomes[dir];
       
+      // Logic: Only correct door advances progress
       if (outcome === OpeningOutcome.CORRECT) {
         systems.progression.increment();
       } else if (outcome === OpeningOutcome.MONSTER) {
-        systems.monster.spawn(new THREE.Vector3(0, 5, -5));
-        systems.monster.triggerHunt(playerCtrl.position);
+        systems.monster.spawn(new THREE.Vector3(0, 4.5, -5));
       }
 
       systems.room.move(dir);
-      if (dir === 'north') { playerCtrl.position.z += 20; systems.monster.position.z += 20; }
-      if (dir === 'south') { playerCtrl.position.z -= 20; systems.monster.position.z -= 20; }
-      if (dir === 'east') { playerCtrl.position.x -= 20; systems.monster.position.x -= 20; }
-      if (dir === 'west') { playerCtrl.position.x += 20; systems.monster.position.x += 20; }
+      
+      // Teleport player to safe opposite side
+      if (dir === 'north') playerCtrl.position.z += 15;
+      if (dir === 'south') playerCtrl.position.z -= 15;
+      if (dir === 'east') playerCtrl.position.x -= 15;
+      if (dir === 'west') playerCtrl.position.x += 15;
 
       if (systems.progression.isComplete()) {
         systems.win.trigger();
@@ -278,18 +275,13 @@ export default function Engine() {
             <span className="text-3xl">❤</span> {uiData.bpm} BPM
           </div>
           
-          {/* Debug Overlays */}
           <div className="absolute top-8 left-1/2 -translate-x-1/2 flex flex-col items-center gap-1 pointer-events-none">
              <div className="px-4 py-1 bg-black/80 text-red-500 font-mono text-xs border border-red-900/50">
-               COORD: {uiData.roomX}, {uiData.roomZ} | ID: {uiData.roomId} | PARENT: {uiData.parentId}
+               DEBUG: {uiData.roomType} | ID: {uiData.roomId} | PARENT: {uiData.parentId}
              </div>
              <div className="px-4 py-1 bg-black/80 text-white font-mono text-[10px] tracking-widest uppercase">
                STATE: {uiData.moveState}
              </div>
-          </div>
-          
-          <div className="absolute bottom-4 left-4 font-mono text-[10px] text-white/20 pointer-events-none uppercase">
-            MATRIX_CORE_STREAM: {uiData.roomType}
           </div>
         </>
       )}
