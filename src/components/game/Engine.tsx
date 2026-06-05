@@ -1,3 +1,4 @@
+
 "use client";
 
 import React, { useEffect, useRef, useState, useMemo } from 'react';
@@ -9,11 +10,10 @@ import { PlayerController } from '@/game/player/PlayerController';
 import { GameLoop } from '@/game/core/GameLoop';
 
 // Systems
-import { RoomSystem, RoomType, DoorOutcome } from '@/game/systems/RoomSystem';
+import { RoomSystem, RoomType, OpeningOutcome } from '@/game/systems/RoomSystem';
 import { ProgressionSystem } from '@/game/systems/ProgressionSystem';
 import { MonsterSystem, MonsterState } from '@/game/systems/MonsterSystem';
 import { HeartRateSystem } from '@/game/systems/HeartRateSystem';
-import { DoorSystem } from '@/game/systems/DoorSystem';
 import { DeathSystem } from '@/game/systems/DeathSystem';
 import { WinSystem } from '@/game/systems/WinSystem';
 
@@ -23,15 +23,12 @@ import { ThreadlingVisuals } from './ThreadlingVisuals';
 export default function Engine() {
   const containerRef = useRef<HTMLDivElement>(null);
   const [gameState, setGameState] = useState<'MENU' | 'PLAYING' | 'DEAD' | 'WON'>('MENU');
-  const isTransitioning = useRef(false);
-  const lastActivationTime = useRef(0);
-
+  
   const [uiData, setUiData] = useState({ 
     progress: 'ROOM 1/6', 
     bpm: 70, 
     deathReason: '',
-    monsterState: 'HIDDEN',
-    monsterPos: new THREE.Vector3(0, -50, 0)
+    roomType: 'MAIN'
   });
 
   const systems = useMemo(() => ({
@@ -39,7 +36,6 @@ export default function Engine() {
     progression: new ProgressionSystem(),
     monster: new MonsterSystem(),
     heart: new HeartRateSystem(),
-    door: new DoorSystem(),
     death: new DeathSystem(),
     win: new WinSystem(),
   }), []);
@@ -51,18 +47,109 @@ export default function Engine() {
     loop: GameLoop;
     scene: THREE.Scene;
     renderer: THREE.WebGLRenderer;
-    doorMeshes: THREE.Group;
-    roomBox: THREE.Mesh;
-    redMat: THREE.ShaderMaterial;
+    roomGroup: THREE.Group;
     monsterVisuals: ThreadlingVisuals;
+    redMat: THREE.ShaderMaterial;
   } | null>(null);
+
+  // Helper to build a single room mesh group
+  const createRoomMeshes = (config: any, xOffset: number, zOffset: number) => {
+    const group = new THREE.Group();
+    group.position.set(xOffset, 0, zOffset);
+
+    const wallMat = engineRef.current?.redMat || new THREE.ShaderMaterial({
+      uniforms: THREE.UniformsUtils.clone(MatrixRedShader.uniforms),
+      vertexShader: MatrixRedShader.vertexShader,
+      fragmentShader: MatrixRedShader.fragmentShader,
+      side: THREE.BackSide,
+    });
+
+    const isWhite = config.type === RoomType.FINAL;
+    const mat = wallMat.clone();
+    mat.uniforms.u_IsWin.value = isWhite;
+    mat.uniforms.u_DepthLevel.value = config.progressAtCreation;
+
+    // Floor & Ceiling
+    const floor = new THREE.Mesh(new THREE.PlaneGeometry(20, 20), mat);
+    floor.rotation.x = -Math.PI / 2;
+    group.add(floor);
+
+    const ceil = new THREE.Mesh(new THREE.PlaneGeometry(20, 20), mat);
+    ceil.rotation.x = Math.PI / 2;
+    ceil.position.y = 6;
+    group.add(ceil);
+
+    // Wall Panels (2 per wall to create opening)
+    const buildWall = (dir: string, outcome: OpeningOutcome) => {
+      const wallGroup = new THREE.Group();
+      if (dir === 'north') { wallGroup.position.z = -10; }
+      if (dir === 'south') { wallGroup.position.z = 10; wallGroup.rotation.y = Math.PI; }
+      if (dir === 'east') { wallGroup.position.x = 10; wallGroup.rotation.y = -Math.PI / 2; }
+      if (dir === 'west') { wallGroup.position.x = -10; wallGroup.rotation.y = Math.PI / 2; }
+
+      if (outcome === OpeningOutcome.NONE) {
+        const fullWall = new THREE.Mesh(new THREE.PlaneGeometry(20, 6), mat);
+        fullWall.position.y = 3;
+        wallGroup.add(fullWall);
+      } else {
+        // Left panel
+        const left = new THREE.Mesh(new THREE.PlaneGeometry(8.5, 6), mat);
+        left.position.set(-5.75, 3, 0);
+        wallGroup.add(left);
+        // Right panel
+        const right = new THREE.Mesh(new THREE.PlaneGeometry(8.5, 6), mat);
+        right.position.set(5.75, 3, 0);
+        wallGroup.add(right);
+        // Header
+        const header = new THREE.Mesh(new THREE.PlaneGeometry(3, 2), mat);
+        header.position.set(0, 5, 0);
+        wallGroup.add(header);
+        
+        // "Void" plane behind opening to block far view
+        const voidMat = new THREE.MeshBasicMaterial({ color: 0x000000 });
+        const voidPlane = new THREE.Mesh(new THREE.PlaneGeometry(3, 4), voidMat);
+        voidPlane.position.set(0, 2, -0.1); // Slightly behind wall
+        wallGroup.add(voidPlane);
+      }
+      group.add(wallGroup);
+    };
+
+    buildWall('north', config.outcomes.north);
+    buildWall('south', config.outcomes.south);
+    buildWall('east', config.outcomes.east);
+    buildWall('west', config.outcomes.west);
+
+    return group;
+  };
+
+  const refreshRoomVisuals = () => {
+    if (!engineRef.current) return;
+    const { roomGroup, room } = systems;
+    engineRef.current.roomGroup.clear();
+
+    const cur = room.currentRoom;
+    // Main room
+    engineRef.current.roomGroup.add(createRoomMeshes(cur, 0, 0));
+    
+    // Neighbors
+    if (cur.outcomes.north !== OpeningOutcome.NONE) 
+      engineRef.current.roomGroup.add(createRoomMeshes(room.getOrCreateRoom(cur.x, cur.z - 1, cur.progressAtCreation, cur), 0, -20));
+    if (cur.outcomes.south !== OpeningOutcome.NONE) 
+      engineRef.current.roomGroup.add(createRoomMeshes(room.getOrCreateRoom(cur.x, cur.z + 1, cur.progressAtCreation, cur), 0, 20));
+    if (cur.outcomes.east !== OpeningOutcome.NONE) 
+      engineRef.current.roomGroup.add(createRoomMeshes(room.getOrCreateRoom(cur.x + 1, cur.z, cur.progressAtCreation, cur), 20, 0));
+    if (cur.outcomes.west !== OpeningOutcome.NONE) 
+      engineRef.current.roomGroup.add(createRoomMeshes(room.getOrCreateRoom(cur.x - 1, cur.z, cur.progressAtCreation, cur), -20, 0));
+    
+    engineRef.current.player.activeOutcomes = cur.outcomes;
+  };
 
   useEffect(() => {
     if (!containerRef.current) return;
 
     const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(85, window.innerWidth / window.innerHeight, 0.1, 100);
-    const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "high-performance" });
+    const camera = new THREE.PerspectiveCamera(85, window.innerWidth / window.innerHeight, 0.1, 50);
+    const renderer = new THREE.WebGLRenderer({ antialias: false });
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setClearColor(0x000000);
     containerRef.current.appendChild(renderer.domElement);
@@ -71,16 +158,12 @@ export default function Engine() {
       uniforms: THREE.UniformsUtils.clone(MatrixRedShader.uniforms),
       vertexShader: MatrixRedShader.vertexShader,
       fragmentShader: MatrixRedShader.fragmentShader,
-      side: THREE.BackSide,
+      side: THREE.FrontSide, // Walls are planes now
     });
-    const box = new THREE.Mesh(new THREE.BoxGeometry(20, 6, 20), redMat);
-    box.position.set(0, 3, 0);
-    scene.add(box);
 
-    const doorMeshes = new THREE.Group();
-    scene.add(doorMeshes);
+    const roomGroup = new THREE.Group();
+    scene.add(roomGroup);
 
-    // Initialize Monster Visuals and add to scene
     const monsterVisuals = new ThreadlingVisuals();
     scene.add(monsterVisuals.group);
 
@@ -90,212 +173,96 @@ export default function Engine() {
     const playerCtrl = new PlayerController(input, cameraCtrl);
 
     const gameLoop = new GameLoop(input, playerCtrl, cameraCtrl, (dt) => {
-      if (systems.death.isDead) {
-        setGameState('DEAD');
-        return;
-      }
-      if (systems.win.hasWon) {
-        setGameState('WON');
-        return;
+      if (systems.death.isDead) { setGameState('DEAD'); return; }
+      if (systems.win.hasWon) { setGameState('WON'); return; }
+
+      // 1. Boundary Streaming Detection
+      if (playerCtrl.position.z < -10) {
+        handleTransition('north');
+      } else if (playerCtrl.position.z > 10) {
+        handleTransition('south');
+      } else if (playerCtrl.position.x > 10) {
+        handleTransition('east');
+      } else if (playerCtrl.position.x < -10) {
+        handleTransition('west');
       }
 
-      // 1. Update Monster (The Weaver)
+      // 2. Update Systems
       systems.monster.update(dt, playerCtrl.position, systems.heart.bpm);
-      const distToMonster = systems.monster.position.distanceTo(playerCtrl.position);
-      
-      // Update Monster Visuals directly in the Three.js scene
       monsterVisuals.update(systems.monster.position, MonsterState[systems.monster.state]);
 
-      // 2. Update Heart Rate (Stress-based failure)
-      const isVisible = systems.monster.state !== MonsterState.HIDDEN && distToMonster < 15;
-      const danger = systems.monster.state !== MonsterState.HIDDEN ? Math.max(0, 1 - (distToMonster / 18)) : 0;
-      systems.heart.update(dt, danger, isVisible);
+      const dist = systems.monster.position.distanceTo(playerCtrl.position);
+      const isVisible = systems.monster.state !== MonsterState.HIDDEN && dist < 15;
+      systems.heart.update(dt, systems.monster.state !== MonsterState.HIDDEN ? Math.max(0, 1 - (dist / 18)) : 0, isVisible);
       
-      if (systems.heart.isHeartFailure) {
-        systems.death.trigger("HEART FAILURE");
-      }
+      if (systems.heart.isHeartFailure) systems.death.trigger("HEART FAILURE");
+      if (dist < 1.2 && systems.monster.state !== MonsterState.HIDDEN) systems.death.trigger("YOU WERE CONSUMED");
 
-      // 3. Collision with Monster
-      if (distToMonster < 1.2 && systems.monster.state !== MonsterState.HIDDEN) {
-        systems.death.trigger("YOU WERE CONSUMED");
-      }
-
-      // 4. Update Visuals
-      redMat.uniforms.u_IsWin.value = systems.win.hasWon;
-      redMat.uniforms.u_DepthLevel.value = systems.progression.currentRoomProgress;
-      
       camera.position.copy(playerCtrl.position);
       renderer.render(scene, camera);
 
-      // Low-frequency UI update
       setUiData({
         progress: systems.progression.progressString,
         bpm: Math.round(systems.heart.bpm),
         deathReason: systems.death.deathReason,
-        monsterState: MonsterState[systems.monster.state],
-        monsterPos: systems.monster.position.clone()
+        roomType: RoomType[systems.room.currentRoom.type]
       });
     });
 
-    engineRef.current = { 
-      input, 
-      camera: cameraCtrl, 
-      player: playerCtrl, 
-      loop: gameLoop, 
-      scene, 
-      renderer, 
-      doorMeshes, 
-      roomBox: box, 
-      redMat,
-      monsterVisuals 
-    };
-    gameLoop.start();
+    const handleTransition = (dir: 'north' | 'south' | 'east' | 'west') => {
+      const prevRoom = systems.room.currentRoom;
+      const outcome = prevRoom.outcomes[dir];
+      
+      // Process Outcome
+      if (outcome === OpeningOutcome.CORRECT) {
+        systems.progression.increment();
+      } else if (outcome === OpeningOutcome.DEAD_END || outcome === OpeningOutcome.EXIT_BACK) {
+        // No progress
+      } else if (outcome === OpeningOutcome.MONSTER) {
+        systems.monster.spawn(new THREE.Vector3(0, 5, -5));
+        systems.monster.triggerHunt(playerCtrl.position);
+      } else if (outcome === OpeningOutcome.NOISE_TRAP) {
+        systems.monster.spawn(new THREE.Vector3(0, 5, -15));
+      }
 
-    const handleResize = () => {
-      camera.aspect = window.innerWidth / window.innerHeight;
-      camera.updateProjectionMatrix();
-      renderer.setSize(window.innerWidth, window.innerHeight);
+      // Shift world
+      systems.room.move(dir);
+      if (dir === 'north') { playerCtrl.position.z += 20; systems.monster.position.z += 20; }
+      if (dir === 'south') { playerCtrl.position.z -= 20; systems.monster.position.z -= 20; }
+      if (dir === 'east') { playerCtrl.position.x -= 20; systems.monster.position.x -= 20; }
+      if (dir === 'west') { playerCtrl.position.x += 20; systems.monster.position.x += 20; }
+
+      if (systems.progression.isComplete()) {
+        systems.win.trigger();
+        setGameState('WON');
+      }
+
+      refreshRoomVisuals();
     };
-    window.addEventListener('resize', handleResize);
+
+    engineRef.current = { 
+      input, camera: cameraCtrl, player: playerCtrl, loop: gameLoop, scene, renderer, roomGroup, monsterVisuals, redMat
+    };
+    
+    refreshRoomVisuals();
+    gameLoop.start();
 
     return () => {
       gameLoop.stop();
       input.dispose();
-      window.removeEventListener('resize', handleResize);
       renderer.dispose();
     };
   }, [systems]);
 
-  const buildRoomVisuals = () => {
-    if (!engineRef.current) return;
-    const { doorMeshes } = engineRef.current;
-    doorMeshes.clear();
-
-    const doorGeo = new THREE.BoxGeometry(2, 3, 0.2);
-    const doorMat = new THREE.ShaderMaterial({
-      uniforms: { ...THREE.UniformsUtils.clone(MatrixRedShader.uniforms), u_IsDoor: { value: true } },
-      vertexShader: MatrixRedShader.vertexShader,
-      fragmentShader: MatrixRedShader.fragmentShader,
-    });
-
-    const outcomes = systems.room.currentRoom.doorOutcomes;
-    
-    if (outcomes.north !== undefined) {
-      const d = new THREE.Mesh(doorGeo, doorMat);
-      d.position.set(0, 1.5, -9.8);
-      doorMeshes.add(d);
-    }
-    if (outcomes.south !== undefined) {
-      const d = new THREE.Mesh(doorGeo, doorMat);
-      d.position.set(0, 1.5, 9.8);
-      doorMeshes.add(d);
-    }
-    if (outcomes.east !== undefined) {
-      const d = new THREE.Mesh(doorGeo, doorMat);
-      d.rotation.y = Math.PI / 2;
-      d.position.set(9.8, 1.5, 0);
-      doorMeshes.add(d);
-    }
-    if (outcomes.west !== undefined) {
-      const d = new THREE.Mesh(doorGeo, doorMat);
-      d.rotation.y = Math.PI / 2;
-      d.position.set(-9.8, 1.5, 0);
-      doorMeshes.add(d);
-    }
-  };
-
   const handleInteraction = () => {
     if (!engineRef.current) return;
     engineRef.current.input.mouse.requestLock();
-
-    if (gameState === 'MENU') {
-      setGameState('PLAYING');
-      buildRoomVisuals();
-      return;
-    }
-
-    if (gameState === 'DEAD' || gameState === 'WON') {
-      window.location.reload();
-      return;
-    }
-
-    if (isTransitioning.current) return;
-    const now = Date.now();
-    if (now - lastActivationTime.current < 1500) return;
-
-    const interaction = systems.door.checkInteraction(
-      engineRef.current.player.position,
-      engineRef.current.camera.getDirection(),
-      systems.room.currentRoom.doorOutcomes
-    );
-
-    if (interaction !== null) {
-      processDoorOutcome(interaction.outcome, interaction.key);
-    }
-  };
-
-  const processDoorOutcome = (outcome: DoorOutcome, directionKey: string) => {
-    const prevRoom = systems.room.currentRoom;
-    isTransitioning.current = true;
-    lastActivationTime.current = Date.now();
-
-    switch (outcome) {
-      case DoorOutcome.CORRECT:
-        systems.progression.increment();
-        if (systems.progression.isComplete()) {
-          systems.win.trigger();
-          setGameState('WON');
-        } else {
-          systems.room.currentRoom = systems.room.generateMainRoom(prevRoom, systems.progression.currentRoomProgress);
-          resetPlayer(directionKey);
-        }
-        break;
-      case DoorOutcome.DEAD_END:
-        systems.room.currentRoom = systems.room.generateDeadEndRoom(prevRoom);
-        resetPlayer(directionKey);
-        break;
-      case DoorOutcome.MONSTER:
-        systems.room.currentRoom = systems.room.generateMonsterRoom(prevRoom);
-        systems.monster.spawn(new THREE.Vector3(0, 5, -5)); 
-        systems.monster.triggerHunt(engineRef.current!.player.position);
-        resetPlayer(directionKey);
-        break;
-      case DoorOutcome.NOISE_TRAP:
-        systems.room.currentRoom = systems.room.generateTrapRoom(prevRoom);
-        systems.monster.spawn(new THREE.Vector3(0, 5, -15));
-        resetPlayer(directionKey);
-        break;
-      case DoorOutcome.EXIT_BACK:
-        if (prevRoom.parent) {
-          systems.room.currentRoom = prevRoom.parent;
-          systems.progression.currentRoomProgress = prevRoom.parent.progressAtCreation;
-        }
-        resetPlayer(directionKey);
-        break;
-    }
-
-    buildRoomVisuals();
-    setTimeout(() => { isTransitioning.current = false; }, 1000);
-  };
-
-  const resetPlayer = (directionKey: string) => {
-    if (!engineRef.current) return;
-    const player = engineRef.current.player;
-    const spawnPos = 4.5; 
-    player.position.set(0, 1.7, 0);
-    if (directionKey === 'north') player.position.z = spawnPos;
-    if (directionKey === 'south') player.position.z = -spawnPos;
-    if (directionKey === 'east') player.position.x = -spawnPos;
-    if (directionKey === 'west') player.position.x = spawnPos;
-    systems.monster.hide();
+    if (gameState === 'MENU') setGameState('PLAYING');
+    if (gameState === 'DEAD' || gameState === 'WON') window.location.reload();
   };
 
   return (
-    <div 
-      ref={containerRef} 
-      className="w-full h-full relative overflow-hidden cursor-none"
-      onClick={handleInteraction}
-    >
+    <div ref={containerRef} className="w-full h-full relative overflow-hidden cursor-none" onClick={handleInteraction}>
       {gameState === 'PLAYING' && (
         <>
           <div className="absolute top-8 left-8 font-headline text-2xl text-red-600 font-bold select-none">
@@ -305,30 +272,27 @@ export default function Engine() {
             <span className="text-3xl">❤</span> {uiData.bpm} BPM
           </div>
           <div className="absolute bottom-4 left-4 font-mono text-[10px] text-white/20 pointer-events-none">
-            WEAVER STATE: {uiData.monsterState}
+            TYPE: {uiData.roomType}
           </div>
         </>
       )}
-
       {gameState === 'MENU' && (
         <div className="absolute inset-0 flex items-center justify-center bg-black/90 z-50">
           <div className="text-center">
             <h1 className="text-8xl font-black text-red-600 italic tracking-tighter mb-8 animate-glitch">REDROOM</h1>
-            <p className="text-white/40 font-headline tracking-[0.5em] animate-pulse">INITIATE THE LOOP</p>
+            <p className="text-white/40 font-headline tracking-[0.5em] animate-pulse uppercase">Enter the connected void</p>
           </div>
         </div>
       )}
-
       {gameState === 'DEAD' && (
         <div className="absolute inset-0 flex items-center justify-center bg-red-950/90 z-50">
           <div className="text-center">
-            <h1 className="text-6xl font-black text-red-600 mb-4">{uiData.deathReason}</h1>
+            <h1 className="text-6xl font-black text-red-600 mb-4 uppercase">{uiData.deathReason}</h1>
             <p className="text-8xl font-black text-white mb-8">TERMINATED</p>
             <p className="text-white/40 font-headline tracking-widest animate-pulse">RETRY</p>
           </div>
         </div>
       )}
-
       {gameState === 'WON' && (
         <div className="absolute inset-0 flex items-center justify-center bg-white z-50">
           <div className="text-center">
@@ -337,8 +301,6 @@ export default function Engine() {
           </div>
         </div>
       )}
-
-      <div className="absolute top-1/2 left-1/2 w-1 h-1 bg-white rounded-full -translate-x-1/2 -translate-y-1/2 mix-blend-difference pointer-events-none" />
       <div className="horror-noise opacity-20 pointer-events-none" />
     </div>
   );

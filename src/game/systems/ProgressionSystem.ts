@@ -1,7 +1,6 @@
 
 /**
  * ProgressionSystem.ts
- * Manages the player's journey through the infinite loop.
  */
 export class ProgressionSystem {
   public currentRoomProgress: number = 1;
@@ -9,10 +8,12 @@ export class ProgressionSystem {
 
   public increment(): void {
     this.currentRoomProgress++;
+    console.log('[ProgressionSystem] PROGRESS ADVANCED TO:', this.currentRoomProgress);
   }
 
-  public reset(): void {
+  public resetToStart(): void {
     this.currentRoomProgress = 1;
+    console.log('[ProgressionSystem] PROGRESS RESET BY LOOP TRAP');
   }
 
   public isComplete(): boolean {
