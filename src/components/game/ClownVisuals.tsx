@@ -9,6 +9,7 @@ import * as THREE from 'three';
  * - Distorted, stretched permanent smile
  * - Violent, broken puppet head swing
  * - Aged, blood-stained fabric palette
+ * - NEW: Psychotic torso folding and backward snapping
  */
 export class ClownVisuals {
   public group: THREE.Group;
@@ -152,35 +153,60 @@ export class ClownVisuals {
     this.group.visible = true;
 
     const time = Date.now();
+    const seconds = time * 0.001;
     
     // 1. Violent, Broken Head Swing Animation
-    // Extreme angles, jerky transitions
     if (time - this.lastHeadSwitch > 80 + Math.random() * 150) {
-      this.targetYaw = (Math.random() - 0.5) * Math.PI * 1.3; // -100 to +100 deg approx
-      this.targetPitch = (Math.random() - 0.5) * 1.1; // unstable neck
+      this.targetYaw = (Math.random() - 0.5) * Math.PI * 1.3;
+      this.targetPitch = (Math.random() - 0.5) * 1.1;
       this.lastHeadSwitch = time;
     }
 
-    // Fast, uncomfortable interpolation
     this.currentYaw = THREE.MathUtils.lerp(this.currentYaw, this.targetYaw, 0.35);
     this.currentPitch = THREE.MathUtils.lerp(this.currentPitch, this.targetPitch, 0.35);
 
     this.head.rotation.y = this.currentYaw;
     this.head.rotation.x = this.currentPitch;
 
-    // 2. High-Frequency Psychotic Twitches
+    // 2. EXTREME TORSO FOLD & BACKWARD SNAP
+    // We use a non-linear sine wave to make the collapse feel violent and the snap feel abrupt
+    const foldSpeed = 2.8;
+    const foldFactor = Math.sin(seconds * foldSpeed);
+    
+    // Forward Collapse: Fold torso until head is near knees
+    // Backward Snap: Arch back unnaturally
+    // Bias the wave so it stays in "collapse" longer then snaps back
+    let torsoRotationX = 0;
+    if (foldFactor > 0) {
+      // Forward phase - smoothed for "collapse" feel
+      torsoRotationX = Math.pow(foldFactor, 0.8) * (Math.PI / 2.2);
+    } else {
+      // Backward phase - sharpened for "snap" feel
+      torsoRotationX = -Math.pow(Math.abs(foldFactor), 0.5) * (Math.PI / 6);
+    }
+    
+    this.torso.rotation.x = torsoRotationX;
+
+    // 3. High-Frequency Psychotic Twitches
     const twitchFactor = time * 0.035;
     this.torso.rotation.z = Math.sin(twitchFactor * 3.1) * 0.03;
     this.torso.position.x = Math.sin(twitchFactor * 2.5) * 0.015;
 
+    // Adjust torso height slightly during fold to keep feet grounded
+    this.torso.position.y = 1.3 - (Math.abs(torsoRotationX) * 0.15);
+
     this.limbs.forEach((limb, i) => {
       // Finger/limb spasms
       limb.rotation.x += Math.sin(twitchFactor * 4.2 + i) * 0.02;
-      limb.scale.y = 1 + Math.sin(twitchFactor * 6.0 + i) * 0.008;
       
-      // Shoulders twitching
+      // Arms should react to the torso fold
       if (i < 2) { // Arms
+        // Make arms "hang" or "flail" during the fold
+        limb.rotation.x = torsoRotationX * 0.5 + Math.sin(twitchFactor * 5.0 + i) * 0.1;
         limb.position.y = 0.3 + Math.sin(twitchFactor * 5.0 + i) * 0.01;
+      } else {
+        // Legs knee shake
+        limb.rotation.z = Math.sin(twitchFactor * 8.0 + i) * 0.015;
       }
     });
   }
