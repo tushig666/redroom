@@ -1,3 +1,4 @@
+
 "use client";
 
 import React, { useEffect, useRef, useState, useMemo } from 'react';
@@ -24,7 +25,13 @@ import { ClownVisuals } from './ClownVisuals';
 export default function Engine() {
   const containerRef = useRef<HTMLDivElement>(null);
   const [gameState, setGameState] = useState<'MENU' | 'PLAYING' | 'DEAD' | 'WON'>('MENU');
+  // Use a ref for the loop to access current state without re-triggering the effect
+  const gameStateRef = useRef(gameState);
   
+  useEffect(() => {
+    gameStateRef.current = gameState;
+  }, [gameState]);
+
   const [uiData, setUiData] = useState({ 
     progress: 'ROOM 1/6', 
     bpm: 70, 
@@ -151,7 +158,7 @@ export default function Engine() {
     const renderer = new THREE.WebGLRenderer({ antialias: false });
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setClearColor(0x000000);
-    containerRef.current.appendChild(renderer.domColorElement || renderer.domElement);
+    containerRef.current.appendChild(renderer.domElement);
 
     const redMat = new THREE.ShaderMaterial({
       uniforms: THREE.UniformsUtils.clone(MatrixRedShader.uniforms),
@@ -175,6 +182,12 @@ export default function Engine() {
     const playerCtrl = new PlayerController(input, cameraCtrl);
 
     const gameLoop = new GameLoop(input, playerCtrl, cameraCtrl, (dt) => {
+      // Loop context checks the ref for state
+      if (gameStateRef.current === 'MENU') {
+        renderer.render(scene, threeCamera);
+        return;
+      }
+      
       if (systems.death.isDead) { setGameState('DEAD'); return; }
       if (systems.win.hasWon) { setGameState('WON'); return; }
 
@@ -225,7 +238,7 @@ export default function Engine() {
       
       // Audio Update
       systems.audio.update(dt, {
-        isMenu: gameState === 'MENU',
+        isMenu: gameStateRef.current === 'MENU',
         inTrapRoom: isTrap,
         monsterDist: dist,
         monsterPos: systems.monster.position,
@@ -272,8 +285,8 @@ export default function Engine() {
         systems.progression.increment();
       } else if (outcome === OpeningOutcome.MONSTER) {
         systems.monster.spawn(new THREE.Vector3(0, 4.5, -5));
-      } else if (outcome === OpeningOutcome.NOISE_TRAP) {
-        // Noise trap logic
+      } else if (outcome === OpeningOutcome.EXIT_BACK) {
+        // Handled by room system internally
       } else {
         systems.monster.hide();
       }
@@ -300,12 +313,19 @@ export default function Engine() {
       input.dispose();
       renderer.dispose();
     };
-  }, [systems, gameState]);
+    // REMOVED gameState from dependencies to prevent engine disposal on state change
+  }, [systems]);
 
   const handleInteraction = () => {
     if (!engineRef.current) return;
+    
+    // 1. Prioritize Pointer Lock (must be absolute first to avoid gesture consumption)
     engineRef.current.input.mouse.requestLock();
-    systems.audio.init(); // Initialize audio context on first interaction
+    
+    // 2. Initialize Audio (idempotent async)
+    systems.audio.init(); 
+    
+    // 3. Update Game State
     if (gameState === 'MENU') setGameState('PLAYING');
     if (gameState === 'DEAD' || gameState === 'WON') window.location.reload();
   };
@@ -325,11 +345,6 @@ export default function Engine() {
              <div className="px-4 py-1 bg-black/80 text-red-500 font-mono text-xs border border-red-900/50">
                MONSTER: {uiData.monsterState} | DIST: {uiData.monsterDist}m
              </div>
-             {uiData.attacked && (
-               <div className="px-4 py-1 bg-red-600 text-white font-mono text-xs uppercase animate-pulse">
-                 ATTACK TRIGGERED
-               </div>
-             )}
           </div>
         </>
       )}
