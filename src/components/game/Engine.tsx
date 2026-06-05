@@ -28,7 +28,12 @@ export default function Engine() {
     progress: 'ROOM 1/6', 
     bpm: 70, 
     deathReason: '',
-    roomType: 'MAIN'
+    roomType: 'MAIN',
+    roomX: 0,
+    roomZ: 0,
+    roomId: '0,0',
+    parentId: 'NONE',
+    moveState: 'IDLE'
   });
 
   const systems = useMemo(() => ({
@@ -50,6 +55,7 @@ export default function Engine() {
     roomGroup: THREE.Group;
     monsterVisuals: ThreadlingVisuals;
     redMat: THREE.ShaderMaterial;
+    threeCamera: THREE.PerspectiveCamera;
   } | null>(null);
 
   // Helper to build a single room mesh group
@@ -79,7 +85,7 @@ export default function Engine() {
     ceil.position.y = 6;
     group.add(ceil);
 
-    // Wall Panels (2 per wall to create opening)
+    // Wall Panels
     const buildWall = (dir: string, outcome: OpeningOutcome) => {
       const wallGroup = new THREE.Group();
       if (dir === 'north') { wallGroup.position.z = -10; }
@@ -92,23 +98,19 @@ export default function Engine() {
         fullWall.position.y = 3;
         wallGroup.add(fullWall);
       } else {
-        // Left panel
         const left = new THREE.Mesh(new THREE.PlaneGeometry(8.5, 6), mat);
         left.position.set(-5.75, 3, 0);
         wallGroup.add(left);
-        // Right panel
         const right = new THREE.Mesh(new THREE.PlaneGeometry(8.5, 6), mat);
         right.position.set(5.75, 3, 0);
         wallGroup.add(right);
-        // Header
         const header = new THREE.Mesh(new THREE.PlaneGeometry(3, 2), mat);
         header.position.set(0, 5, 0);
         wallGroup.add(header);
         
-        // "Void" plane behind opening to block far view
         const voidMat = new THREE.MeshBasicMaterial({ color: 0x000000 });
         const voidPlane = new THREE.Mesh(new THREE.PlaneGeometry(3, 4), voidMat);
-        voidPlane.position.set(0, 2, -0.1); // Slightly behind wall
+        voidPlane.position.set(0, 2, -0.1);
         wallGroup.add(voidPlane);
       }
       group.add(wallGroup);
@@ -124,14 +126,12 @@ export default function Engine() {
 
   const refreshRoomVisuals = () => {
     if (!engineRef.current) return;
-    const { roomGroup, room } = systems;
+    const { room } = systems;
     engineRef.current.roomGroup.clear();
 
     const cur = room.currentRoom;
-    // Main room
     engineRef.current.roomGroup.add(createRoomMeshes(cur, 0, 0));
     
-    // Neighbors
     if (cur.outcomes.north !== OpeningOutcome.NONE) 
       engineRef.current.roomGroup.add(createRoomMeshes(room.getOrCreateRoom(cur.x, cur.z - 1, cur.progressAtCreation, cur), 0, -20));
     if (cur.outcomes.south !== OpeningOutcome.NONE) 
@@ -148,7 +148,7 @@ export default function Engine() {
     if (!containerRef.current) return;
 
     const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(85, window.innerWidth / window.innerHeight, 0.1, 50);
+    const threeCamera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 50);
     const renderer = new THREE.WebGLRenderer({ antialias: false });
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setClearColor(0x000000);
@@ -158,7 +158,7 @@ export default function Engine() {
       uniforms: THREE.UniformsUtils.clone(MatrixRedShader.uniforms),
       vertexShader: MatrixRedShader.vertexShader,
       fragmentShader: MatrixRedShader.fragmentShader,
-      side: THREE.FrontSide, // Walls are planes now
+      side: THREE.FrontSide,
     });
 
     const roomGroup = new THREE.Group();
@@ -169,25 +169,31 @@ export default function Engine() {
 
     const input = new InputManager();
     input.mouse.setElement(containerRef.current);
-    const cameraCtrl = new CameraController(camera);
+    const cameraCtrl = new CameraController(threeCamera);
     const playerCtrl = new PlayerController(input, cameraCtrl);
 
     const gameLoop = new GameLoop(input, playerCtrl, cameraCtrl, (dt) => {
       if (systems.death.isDead) { setGameState('DEAD'); return; }
       if (systems.win.hasWon) { setGameState('WON'); return; }
 
-      // 1. Boundary Streaming Detection
-      if (playerCtrl.position.z < -10) {
-        handleTransition('north');
-      } else if (playerCtrl.position.z > 10) {
-        handleTransition('south');
-      } else if (playerCtrl.position.x > 10) {
-        handleTransition('east');
-      } else if (playerCtrl.position.x < -10) {
-        handleTransition('west');
-      }
+      // 1. Boundary Streaming
+      if (playerCtrl.position.z < -10) handleTransition('north');
+      else if (playerCtrl.position.z > 10) handleTransition('south');
+      else if (playerCtrl.position.x > 10) handleTransition('east');
+      else if (playerCtrl.position.x < -10) handleTransition('west');
 
-      // 2. Update Systems
+      // 2. FOV & Camera Bob Updates
+      const isSprinting = playerCtrl.movementState === 'SPRINT';
+      const targetFov = isSprinting ? 82 : 75;
+      threeCamera.fov = THREE.MathUtils.lerp(threeCamera.fov, targetFov, 0.1);
+      threeCamera.updateProjectionMatrix();
+
+      const moveSpeed = new THREE.Vector2(playerCtrl.velocity.x, playerCtrl.velocity.z).length();
+      const bobFreq = isSprinting ? 12 : 8;
+      const bobAmount = isSprinting ? 0.08 : 0.05;
+      const bob = Math.sin(Date.now() * 0.001 * bobFreq) * bobAmount * (moveSpeed / 5);
+      
+      // 3. Systems Update
       systems.monster.update(dt, playerCtrl.position, systems.heart.bpm);
       monsterVisuals.update(systems.monster.position, MonsterState[systems.monster.state]);
 
@@ -198,14 +204,20 @@ export default function Engine() {
       if (systems.heart.isHeartFailure) systems.death.trigger("HEART FAILURE");
       if (dist < 1.2 && systems.monster.state !== MonsterState.HIDDEN) systems.death.trigger("YOU WERE CONSUMED");
 
-      camera.position.copy(playerCtrl.position);
-      renderer.render(scene, camera);
+      threeCamera.position.copy(playerCtrl.position);
+      threeCamera.position.y += bob;
+      renderer.render(scene, threeCamera);
 
       setUiData({
         progress: systems.progression.progressString,
         bpm: Math.round(systems.heart.bpm),
         deathReason: systems.death.deathReason,
-        roomType: RoomType[systems.room.currentRoom.type]
+        roomType: RoomType[systems.room.currentRoom.type],
+        roomX: systems.room.currentRoom.x,
+        roomZ: systems.room.currentRoom.z,
+        roomId: systems.room.currentRoom.id,
+        parentId: systems.room.currentRoom.parentId || 'NONE',
+        moveState: playerCtrl.movementState
       });
     });
 
@@ -213,19 +225,13 @@ export default function Engine() {
       const prevRoom = systems.room.currentRoom;
       const outcome = prevRoom.outcomes[dir];
       
-      // Process Outcome
       if (outcome === OpeningOutcome.CORRECT) {
         systems.progression.increment();
-      } else if (outcome === OpeningOutcome.DEAD_END || outcome === OpeningOutcome.EXIT_BACK) {
-        // No progress
       } else if (outcome === OpeningOutcome.MONSTER) {
         systems.monster.spawn(new THREE.Vector3(0, 5, -5));
         systems.monster.triggerHunt(playerCtrl.position);
-      } else if (outcome === OpeningOutcome.NOISE_TRAP) {
-        systems.monster.spawn(new THREE.Vector3(0, 5, -15));
       }
 
-      // Shift world
       systems.room.move(dir);
       if (dir === 'north') { playerCtrl.position.z += 20; systems.monster.position.z += 20; }
       if (dir === 'south') { playerCtrl.position.z -= 20; systems.monster.position.z -= 20; }
@@ -241,7 +247,7 @@ export default function Engine() {
     };
 
     engineRef.current = { 
-      input, camera: cameraCtrl, player: playerCtrl, loop: gameLoop, scene, renderer, roomGroup, monsterVisuals, redMat
+      input, camera: cameraCtrl, player: playerCtrl, loop: gameLoop, scene, renderer, roomGroup, monsterVisuals, redMat, threeCamera
     };
     
     refreshRoomVisuals();
@@ -271,8 +277,19 @@ export default function Engine() {
           <div className="absolute top-8 right-8 font-headline text-2xl text-red-600 font-bold flex items-center gap-2 select-none animate-visceral-pulse">
             <span className="text-3xl">❤</span> {uiData.bpm} BPM
           </div>
-          <div className="absolute bottom-4 left-4 font-mono text-[10px] text-white/20 pointer-events-none">
-            TYPE: {uiData.roomType}
+          
+          {/* Debug Overlays */}
+          <div className="absolute top-8 left-1/2 -translate-x-1/2 flex flex-col items-center gap-1 pointer-events-none">
+             <div className="px-4 py-1 bg-black/80 text-red-500 font-mono text-xs border border-red-900/50">
+               COORD: {uiData.roomX}, {uiData.roomZ} | ID: {uiData.roomId} | PARENT: {uiData.parentId}
+             </div>
+             <div className="px-4 py-1 bg-black/80 text-white font-mono text-[10px] tracking-widest uppercase">
+               STATE: {uiData.moveState}
+             </div>
+          </div>
+          
+          <div className="absolute bottom-4 left-4 font-mono text-[10px] text-white/20 pointer-events-none uppercase">
+            MATRIX_CORE_STREAM: {uiData.roomType}
           </div>
         </>
       )}
@@ -297,7 +314,7 @@ export default function Engine() {
         <div className="absolute inset-0 flex items-center justify-center bg-white z-50">
           <div className="text-center">
             <h1 className="text-6xl font-black text-black mb-8 tracking-tighter">SURVIVAL CONFIRMED</h1>
-            <p className="text-black/40 font-headline tracking-widest animate-pulse">EXIT MATRIX</p>
+            <p className="text-black/40 font-headline tracking-widest animate-pulse uppercase">Exit Matrix</p>
           </div>
         </div>
       )}
