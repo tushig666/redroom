@@ -15,6 +15,7 @@ import { MonsterSystem, MonsterState } from '@/game/systems/MonsterSystem';
 import { HeartRateSystem } from '@/game/systems/HeartRateSystem';
 import { DeathSystem } from '@/game/systems/DeathSystem';
 import { WinSystem } from '@/game/systems/WinSystem';
+import { AudioSystem } from '@/game/systems/AudioSystem';
 
 // AAA Visuals
 import { ThreadlingVisuals } from './ThreadlingVisuals';
@@ -42,6 +43,7 @@ export default function Engine() {
     heart: new HeartRateSystem(),
     death: new DeathSystem(),
     win: new WinSystem(),
+    audio: new AudioSystem(),
   }), []);
 
   const engineRef = useRef<{
@@ -149,7 +151,7 @@ export default function Engine() {
     const renderer = new THREE.WebGLRenderer({ antialias: false });
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setClearColor(0x000000);
-    containerRef.current.appendChild(renderer.domElement);
+    containerRef.current.appendChild(renderer.domColorElement || renderer.domElement);
 
     const redMat = new THREE.ShaderMaterial({
       uniforms: THREE.UniformsUtils.clone(MatrixRedShader.uniforms),
@@ -221,6 +223,16 @@ export default function Engine() {
       const isVisible = systems.monster.state !== MonsterState.HIDDEN;
       systems.heart.update(dt, isVisible ? Math.max(0, 1 - (dist / 15)) : 0, isVisible);
       
+      // Audio Update
+      systems.audio.update(dt, {
+        isMenu: gameState === 'MENU',
+        inTrapRoom: isTrap,
+        monsterDist: dist,
+        monsterPos: systems.monster.position,
+        playerPos: playerCtrl.position,
+        playerDir: cameraCtrl.getDirection()
+      });
+
       if (systems.heart.isHeartFailure) systems.death.trigger("HEART FAILURE");
       if (systems.monster.state === MonsterState.ATTACKING) {
         systems.death.trigger("YOU WERE CONSUMED");
@@ -288,11 +300,12 @@ export default function Engine() {
       input.dispose();
       renderer.dispose();
     };
-  }, [systems]);
+  }, [systems, gameState]);
 
   const handleInteraction = () => {
     if (!engineRef.current) return;
     engineRef.current.input.mouse.requestLock();
+    systems.audio.init(); // Initialize audio context on first interaction
     if (gameState === 'MENU') setGameState('PLAYING');
     if (gameState === 'DEAD' || gameState === 'WON') window.location.reload();
   };
