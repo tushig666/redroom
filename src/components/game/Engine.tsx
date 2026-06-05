@@ -1,4 +1,3 @@
-
 "use client";
 
 import React, { useEffect, useRef, useState } from 'react';
@@ -9,7 +8,7 @@ import { CameraController } from '@/game/player/CameraController';
 import { PlayerController } from '@/game/player/PlayerController';
 import { GameLoop } from '@/game/core/GameLoop';
 
-// New Systems
+// Systems
 import { RoomSystem, RoomType, DoorOutcome } from '@/game/systems/RoomSystem';
 import { ProgressionSystem } from '@/game/systems/ProgressionSystem';
 import { MonsterSystem, MonsterState } from '@/game/systems/MonsterSystem';
@@ -48,6 +47,7 @@ export default function Engine() {
     renderer: THREE.WebGLRenderer;
     monsterMesh: THREE.Mesh;
     doorMeshes: THREE.Group;
+    roomBox: THREE.Mesh;
   } | null>(null);
 
   useEffect(() => {
@@ -71,7 +71,7 @@ export default function Engine() {
     box.position.set(0, 3, 0);
     scene.add(box);
 
-    // Monster Mesh (The Threadling)
+    // Monster Mesh
     const monsterGeo = new THREE.IcosahedronGeometry(0.8, 0);
     const monsterMat = new THREE.MeshBasicMaterial({ color: 0x000000 });
     const monsterMesh = new THREE.Mesh(monsterGeo, monsterMat);
@@ -98,12 +98,12 @@ export default function Engine() {
 
       // 1. Update Monster
       const distToMonster = monsterMesh.position.distanceTo(playerCtrl.position);
-      const isTerrified = distToMonster < 8; // Visibility/proximity check
+      const isTerrified = distToMonster < 8 && systems.monster.state !== MonsterState.HIDDEN;
       systems.monster.update(dt, playerCtrl.position, systems.heart.bpm);
       monsterMesh.position.copy(systems.monster.position);
 
       // 2. Update Heart Rate
-      const danger = Math.max(0, 1 - (distToMonster / 15));
+      const danger = systems.monster.state !== MonsterState.HIDDEN ? Math.max(0, 1 - (distToMonster / 15)) : 0;
       systems.heart.update(dt, danger, isTerrified);
       if (systems.heart.isHeartFailure) {
         systems.death.trigger("HEART FAILURE");
@@ -131,7 +131,7 @@ export default function Engine() {
       });
     });
 
-    engineRef.current = { input, camera: cameraCtrl, player: playerCtrl, loop: gameLoop, scene, renderer, monsterMesh, doorMeshes };
+    engineRef.current = { input, camera: cameraCtrl, player: playerCtrl, loop: gameLoop, scene, renderer, monsterMesh, doorMeshes, roomBox: box };
     gameLoop.start();
 
     const handleResize = () => {
@@ -156,7 +156,7 @@ export default function Engine() {
 
     const doorGeo = new THREE.BoxGeometry(2, 3, 0.2);
     const doorMat = new THREE.ShaderMaterial({
-      uniforms: { ...MatrixRedShader.uniforms, u_IsDoor: { value: true } },
+      uniforms: { ...THREE.UniformsUtils.clone(MatrixRedShader.uniforms), u_IsDoor: { value: true } },
       vertexShader: MatrixRedShader.vertexShader,
       fragmentShader: MatrixRedShader.fragmentShader,
     });
@@ -230,10 +230,14 @@ export default function Engine() {
         resetPlayer();
         break;
       case DoorOutcome.MONSTER:
+        console.log("MONSTER ROOM TRIGGERED");
+        systems.room.currentRoom = systems.room.generateMainRoom(); // Placeholder transition
         systems.monster.spawn(new THREE.Vector3(0, 1.7, -5));
         systems.monster.triggerHunt(engineRef.current!.player.position);
+        resetPlayer();
         break;
       case DoorOutcome.NOISE_TRAP:
+        console.log("NOISE TRAP TRIGGERED");
         systems.room.currentRoom = systems.room.generateTrapRoom();
         systems.monster.spawn(new THREE.Vector3(0, 1.7, -15));
         resetPlayer();
@@ -259,6 +263,16 @@ export default function Engine() {
       className="w-full h-full relative overflow-hidden cursor-none"
       onClick={handleInteraction}
     >
+      {/* DEBUG OVERLAY */}
+      {gameState === 'PLAYING' && (
+        <div className="absolute top-4 left-1/2 -translate-x-1/2 font-mono text-[10px] text-red-500 bg-black/50 p-2 pointer-events-none text-center z-[60]">
+          DEBUG: N: {DoorOutcome[systems.room.currentRoom.doorOutcomes.north ?? -1]} | 
+          S: {DoorOutcome[systems.room.currentRoom.doorOutcomes.south ?? -1]} | 
+          E: {DoorOutcome[systems.room.currentRoom.doorOutcomes.east ?? -1]} | 
+          W: {DoorOutcome[systems.room.currentRoom.doorOutcomes.west ?? -1]}
+        </div>
+      )}
+
       {/* HUD */}
       {gameState === 'PLAYING' && (
         <>
@@ -269,7 +283,6 @@ export default function Engine() {
             <span className="text-3xl">❤</span> {uiData.bpm} BPM
           </div>
           
-          {/* Debug Overlay */}
           <div className="absolute bottom-4 left-4 font-mono text-[10px] text-white/20 pointer-events-none">
             MONSTER: {uiData.monsterState}
           </div>
