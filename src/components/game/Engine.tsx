@@ -1,4 +1,3 @@
-
 "use client";
 
 import React, { useEffect, useRef, useState, useMemo } from 'react';
@@ -19,7 +18,7 @@ import { DeathSystem } from '@/game/systems/DeathSystem';
 import { WinSystem } from '@/game/systems/WinSystem';
 
 // AAA Visuals
-import ThreadlingVisuals from './ThreadlingVisuals';
+import { ThreadlingVisuals } from './ThreadlingVisuals';
 
 export default function Engine() {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -55,6 +54,7 @@ export default function Engine() {
     doorMeshes: THREE.Group;
     roomBox: THREE.Mesh;
     redMat: THREE.ShaderMaterial;
+    monsterVisuals: ThreadlingVisuals;
   } | null>(null);
 
   useEffect(() => {
@@ -80,6 +80,10 @@ export default function Engine() {
     const doorMeshes = new THREE.Group();
     scene.add(doorMeshes);
 
+    // Initialize Monster Visuals and add to scene
+    const monsterVisuals = new ThreadlingVisuals();
+    scene.add(monsterVisuals.group);
+
     const input = new InputManager();
     input.mouse.setElement(containerRef.current);
     const cameraCtrl = new CameraController(camera);
@@ -98,11 +102,15 @@ export default function Engine() {
       // 1. Update Monster (The Weaver)
       systems.monster.update(dt, playerCtrl.position, systems.heart.bpm);
       const distToMonster = systems.monster.position.distanceTo(playerCtrl.position);
-      const isVisible = systems.monster.state !== MonsterState.HIDDEN && distToMonster < 15;
+      
+      // Update Monster Visuals directly in the Three.js scene
+      monsterVisuals.update(systems.monster.position, MonsterState[systems.monster.state]);
 
       // 2. Update Heart Rate (Stress-based failure)
+      const isVisible = systems.monster.state !== MonsterState.HIDDEN && distToMonster < 15;
       const danger = systems.monster.state !== MonsterState.HIDDEN ? Math.max(0, 1 - (distToMonster / 18)) : 0;
       systems.heart.update(dt, danger, isVisible);
+      
       if (systems.heart.isHeartFailure) {
         systems.death.trigger("HEART FAILURE");
       }
@@ -119,6 +127,7 @@ export default function Engine() {
       camera.position.copy(playerCtrl.position);
       renderer.render(scene, camera);
 
+      // Low-frequency UI update
       setUiData({
         progress: systems.progression.progressString,
         bpm: Math.round(systems.heart.bpm),
@@ -128,7 +137,18 @@ export default function Engine() {
       });
     });
 
-    engineRef.current = { input, camera: cameraCtrl, player: playerCtrl, loop: gameLoop, scene, renderer, doorMeshes, roomBox: box, redMat };
+    engineRef.current = { 
+      input, 
+      camera: cameraCtrl, 
+      player: playerCtrl, 
+      loop: gameLoop, 
+      scene, 
+      renderer, 
+      doorMeshes, 
+      roomBox: box, 
+      redMat,
+      monsterVisuals 
+    };
     gameLoop.start();
 
     const handleResize = () => {
@@ -236,7 +256,6 @@ export default function Engine() {
         break;
       case DoorOutcome.MONSTER:
         systems.room.currentRoom = systems.room.generateMonsterRoom(prevRoom);
-        // AAA: Weaver emerges from the ceiling
         systems.monster.spawn(new THREE.Vector3(0, 5, -5)); 
         systems.monster.triggerHunt(engineRef.current!.player.position);
         resetPlayer(directionKey);
@@ -277,16 +296,6 @@ export default function Engine() {
       className="w-full h-full relative overflow-hidden cursor-none"
       onClick={handleInteraction}
     >
-      {/* AAA WEAVER VISUALS */}
-      {engineRef.current && (
-        <div className="hidden">
-          <ThreadlingVisuals 
-            position={uiData.monsterPos} 
-            state={uiData.monsterState} 
-          />
-        </div>
-      )}
-
       {gameState === 'PLAYING' && (
         <>
           <div className="absolute top-8 left-8 font-headline text-2xl text-red-600 font-bold select-none">
