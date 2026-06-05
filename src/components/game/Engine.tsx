@@ -1,324 +1,131 @@
 
 "use client";
 
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { MatrixRedShader } from './Shaders';
-import * as Tone from 'tone';
-import { pointerLockManager, LockStatus } from '@/systems/PointerLockManager';
-
-// --- CONSTANTS ---
-const ROOM_SIZE = 20;
-const BOUNDARY = 9.4;
-const PLAYER_HEIGHT = 1.7;
-const MOUSE_SENSITIVITY = 0.0025;
-const MOVEMENT_SPEED = 4.5;
-const MAX_DT = 0.1;
-const INTERACTION_DISTANCE = 3.5;
-
-type GameState = 'STATE_MENU' | 'STATE_PLAYING' | 'STATE_WIN_SEQUENCE';
-type DoorCardinal = 'NORTH' | 'SOUTH' | 'EAST' | 'WEST';
-
-interface DoorMeta {
-  mesh: THREE.Mesh;
-  cardinal: DoorCardinal;
-  isCorrect: boolean;
-  position: THREE.Vector3;
-}
+import { InputManager } from '@/game/input/InputManager';
+import { CameraController } from '@/game/player/CameraController';
+import { PlayerController } from '@/game/player/PlayerController';
+import { GameLoop } from '@/game/core/GameLoop';
 
 export default function Engine() {
   const containerRef = useRef<HTMLDivElement>(null);
-  const [gameState, setGameState] = useState<GameState>('STATE_MENU');
-  const [depth, setDepth] = useState(1);
-  const [lockStatus, setLockStatus] = useState<LockStatus>(pointerLockManager.getStatus());
-
-  // Engine Refs
-  const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
-  const sceneRef = useRef<THREE.Scene | null>(null);
-  const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
-  const playerRef = useRef<THREE.Group | null>(null);
-  const doorsRef = useRef<DoorMeta[]>([]);
+  const [debug, setDebug] = useState({ fps: 0, pos: '0, 0', rot: '0, 0', status: 'DISABLED' });
+  const [gameState, setGameState] = useState<'MENU' | 'PLAYING'>('MENU');
   
-  // Physics & Input Refs
-  const keyStates = useRef<{ [key: string]: boolean }>({
-    KeyW: false, KeyA: false, KeyS: false, KeyD: false
-  });
-  const playerPos = useRef(new THREE.Vector3(0, PLAYER_HEIGHT, 0));
-  const yaw = useRef(0);
-  const pitch = useRef(0);
-  const totalElapsedTime = useRef(0);
-  const correctDoorIndex = useRef(Math.floor(Math.random() * 4));
+  // Logic Refs
+  const engineRef = useRef<{
+    input: InputManager;
+    camera: CameraController;
+    player: PlayerController;
+    loop: GameLoop;
+    threeCamera: THREE.PerspectiveCamera;
+  } | null>(null);
 
-  // Audio Refs
-  const heartbeatRef = useRef<Tone.MembraneSynth | null>(null);
-  const droneRef = useRef<Tone.Oscillator | null>(null);
-
-  // --- TRANSITION LOGIC ---
-  const transitionTo = useCallback((nextState: GameState) => {
-    setGameState(nextState);
-    if (nextState === 'STATE_PLAYING') {
-      playerPos.current.set(0, PLAYER_HEIGHT, 0);
-    }
-  }, []);
-
-  const resetRoom = (advance: boolean) => {
-    if (advance) {
-      if (depth >= 4) {
-        transitionTo('STATE_WIN_SEQUENCE');
-        return;
-      }
-      setDepth(d => d + 1);
-    } else {
-      setDepth(1);
-    }
-    
-    playerPos.current.set(0, PLAYER_HEIGHT, 0);
-    correctDoorIndex.current = Math.floor(Math.random() * 4);
-  };
-
-  // --- INITIALIZATION ---
   useEffect(() => {
     if (!containerRef.current) return;
 
+    // --- THREE JS SETUP ---
     const scene = new THREE.Scene();
-    sceneRef.current = scene;
-
     const camera = new THREE.PerspectiveCamera(85, window.innerWidth / window.innerHeight, 0.1, 100);
-    cameraRef.current = camera;
-
-    const player = new THREE.Group();
-    player.add(camera);
-    scene.add(player);
-    playerRef.current = player;
-
     const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "high-performance" });
-    renderer.setPixelRatio(1);
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setClearColor(0xff0000);
     containerRef.current.appendChild(renderer.domElement);
-    rendererRef.current = renderer;
 
-    const buildGeometry = () => {
-      const redMat = new THREE.ShaderMaterial({
-        uniforms: THREE.UniformsUtils.clone(MatrixRedShader.uniforms),
-        vertexShader: MatrixRedShader.vertexShader,
-        fragmentShader: MatrixRedShader.fragmentShader,
-        side: THREE.BackSide,
-      });
+    // --- ENVIRONMENT ---
+    const redMat = new THREE.ShaderMaterial({
+      uniforms: THREE.UniformsUtils.clone(MatrixRedShader.uniforms),
+      vertexShader: MatrixRedShader.vertexShader,
+      fragmentShader: MatrixRedShader.fragmentShader,
+      side: THREE.BackSide,
+    });
+    const box = new THREE.Mesh(new THREE.BoxGeometry(20, 6, 20), redMat);
+    box.position.set(0, 3, 0);
+    scene.add(box);
 
-      const boxGeo = new THREE.BoxGeometry(ROOM_SIZE, 6, ROOM_SIZE);
-      const room = new THREE.Mesh(boxGeo, redMat);
-      room.position.set(0, 3, 0);
-      scene.add(room);
-
-      const doorCardinalPoints = [
-        { cardinal: 'NORTH' as const, pos: [0, 1.4, -9.99], rot: [0, 0, 0] },
-        { cardinal: 'SOUTH' as const, pos: [0, 1.4, 9.99], rot: [0, Math.PI, 0] },
-        { cardinal: 'EAST' as const, pos: [9.99, 1.4, 0], rot: [0, -Math.PI / 2, 0] },
-        { cardinal: 'WEST' as const, pos: [-9.99, 1.4, 0], rot: [0, Math.PI / 2, 0] },
-      ];
-
-      doorCardinalPoints.forEach((point) => {
-        const doorGeo = new THREE.PlaneGeometry(2.5, 3.5);
-        const doorMat = new THREE.ShaderMaterial({
-          uniforms: { ...THREE.UniformsUtils.clone(MatrixRedShader.uniforms), u_IsDoor: { value: true } },
-          vertexShader: MatrixRedShader.vertexShader,
-          fragmentShader: MatrixRedShader.fragmentShader,
-        });
-        const doorMesh = new THREE.Mesh(doorGeo, doorMat);
-        doorMesh.position.set(point.pos[0], point.pos[1], point.pos[2]);
-        doorMesh.rotation.set(point.rot[0], point.rot[1], point.rot[2]);
-        scene.add(doorMesh);
-        
-        doorsRef.current.push({
-          mesh: doorMesh,
-          cardinal: point.cardinal,
-          isCorrect: false,
-          position: new THREE.Vector3(point.pos[0], point.pos[1], point.pos[2])
-        });
-      });
-    };
-
-    buildGeometry();
-
-    const onKeyDown = (e: KeyboardEvent) => { if (keyStates.current.hasOwnProperty(e.code)) keyStates.current[e.code] = true; };
-    const onKeyUp = (e: KeyboardEvent) => { if (keyStates.current.hasOwnProperty(e.code)) keyStates.current[e.code] = false; };
+    // --- ENGINE INITIALIZATION ---
+    const input = new InputManager();
+    input.mouse.setElement(containerRef.current);
     
-    const onMouseMove = (e: MouseEvent) => {
-      const currentStatus = pointerLockManager.getStatus();
-      if (currentStatus.mode === 'DISABLED') return;
-
-      const deltas = pointerLockManager.getDeltas(e);
-      yaw.current -= deltas.x * MOUSE_SENSITIVITY;
-      pitch.current -= deltas.y * MOUSE_SENSITIVITY;
-      pitch.current = Math.max(-Math.PI / 2 + 0.1, Math.min(Math.PI / 2 - 0.1, pitch.current));
-    };
-
-    const onClick = async () => {
-      const status = pointerLockManager.getStatus();
-      
-      if (status.mode === 'DISABLED') {
-        if (containerRef.current) {
-          const newStatus = await pointerLockManager.requestLock(containerRef.current);
-          setLockStatus(newStatus);
-          if (gameState === 'STATE_MENU') transitionTo('STATE_PLAYING');
-        }
-        return;
-      }
-      
-      const raycaster = new THREE.Raycaster();
-      raycaster.setFromCamera({ x: 0, y: 0 }, camera);
-      const intersects = raycaster.intersectObjects(doorsRef.current.map(d => d.mesh));
-      
-      if (intersects.length > 0) {
-        const hitMesh = intersects[0].object;
-        const doorData = doorsRef.current.find(d => d.mesh === hitMesh);
-        const dist = playerPos.current.distanceTo(intersects[0].point);
-        
-        if (doorData && dist < INTERACTION_DISTANCE) {
-          const isCorrect = doorsRef.current.indexOf(doorData) === correctDoorIndex.current;
-          resetRoom(isCorrect);
-        }
-      }
-    };
-
-    window.addEventListener('keydown', onKeyDown);
-    window.addEventListener('keyup', onKeyUp);
-    window.addEventListener('mousemove', onMouseMove);
-    window.addEventListener('mousedown', onClick);
+    const cameraCtrl = new CameraController(camera);
+    const playerCtrl = new PlayerController(input, cameraCtrl);
     
-    const onPointerLockChange = () => {
-      const isLocked = document.pointerLockElement === containerRef.current;
-      if (!isLocked && pointerLockManager.getStatus().mode === 'LOCKED') {
-        pointerLockManager.releaseLock();
-        setLockStatus(pointerLockManager.getStatus());
-      }
-    };
-    document.addEventListener('pointerlockchange', onPointerLockChange);
-
-    let lastTime = performance.now();
-    const animate = (time: number) => {
-      const dt = Math.min((time - lastTime) / 1000, MAX_DT);
-      lastTime = time;
-      totalElapsedTime.current += dt;
-
-      if (gameState === 'STATE_PLAYING') {
-        const forward = new THREE.Vector3(Math.sin(yaw.current), 0, Math.cos(yaw.current)).normalize();
-        const right = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), forward).normalize();
-        
-        const moveVec = new THREE.Vector3(0, 0, 0);
-        if (keyStates.current['KeyW']) moveVec.add(forward.clone().multiplyScalar(-1));
-        if (keyStates.current['KeyS']) moveVec.add(forward);
-        if (keyStates.current['KeyA']) moveVec.add(right);
-        if (keyStates.current['KeyD']) moveVec.add(right.clone().multiplyScalar(-1));
-        
-        if (moveVec.length() > 0) {
-          moveVec.normalize().multiplyScalar(MOVEMENT_SPEED * dt);
-          playerPos.current.add(moveVec);
-        }
-
-        playerPos.current.x = Math.max(-BOUNDARY, Math.min(BOUNDARY, playerPos.current.x));
-        playerPos.current.z = Math.max(-BOUNDARY, Math.min(BOUNDARY, playerPos.current.z));
-        playerPos.current.y = PLAYER_HEIGHT;
-
-        playerRef.current!.position.copy(playerPos.current);
-        camera.rotation.set(pitch.current, yaw.current, 0, 'YXZ');
-      }
-
-      const isDepth5 = depth >= 5 || gameState === 'STATE_WIN_SEQUENCE';
-      const clearColor = isDepth5 ? 0xffffff : 0xff0000;
-      renderer.setClearColor(clearColor);
-
-      scene.traverse((obj) => {
-        if (obj instanceof THREE.Mesh && obj.material instanceof THREE.ShaderMaterial) {
-          obj.material.uniforms.u_DepthLevel.value = depth;
-          obj.material.uniforms.u_IsWin.value = isDepth5;
-        }
-      });
-
+    const gameLoop = new GameLoop(input, playerCtrl, cameraCtrl, (dt) => {
+      // Sync Three.js Camera to Player position
+      camera.position.copy(playerCtrl.position);
       renderer.render(scene, camera);
-      requestAnimationFrame(animate);
-    };
 
-    requestAnimationFrame(animate);
+      // Debug Updates
+      setDebug({
+        fps: Math.round(1/dt),
+        pos: `${playerCtrl.position.x.toFixed(1)}, ${playerCtrl.position.z.toFixed(1)}`,
+        rot: `${cameraCtrl.getYaw().toFixed(2)}, ${cameraCtrl.getPitch().toFixed(2)}`,
+        status: input.mouse.status
+      });
+    });
+
+    engineRef.current = { input, camera: cameraCtrl, player: playerCtrl, loop: gameLoop, threeCamera: camera };
+    gameLoop.start();
+
+    // Resize Handler
+    const handleResize = () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    };
+    window.addEventListener('resize', handleResize);
 
     return () => {
-      window.removeEventListener('keydown', onKeyDown);
-      window.removeEventListener('keyup', onKeyUp);
-      window.removeEventListener('mousemove', onMouseMove);
-      window.removeEventListener('mousedown', onClick);
-      document.removeEventListener('pointerlockchange', onPointerLockChange);
+      gameLoop.stop();
+      input.dispose();
+      window.removeEventListener('resize', handleResize);
       renderer.dispose();
     };
-  }, [gameState]);
+  }, []);
 
-  useEffect(() => {
-    const initAudio = async () => {
-      await Tone.start();
-      
-      const drone = new Tone.Oscillator(55, "sine").toDestination().start();
-      drone.volume.value = -30;
-      droneRef.current = drone;
-
-      const heart = new Tone.MembraneSynth().toDestination();
-      heartbeatRef.current = heart;
-
-      const loop = new Tone.Loop(time => {
-        heart.triggerAttackRelease("C1", "8n", time);
-        heart.triggerAttackRelease("C1", "8n", time + 0.2);
-      }, "1n").start(0);
-      Tone.Transport.start();
-    };
-    
-    if (gameState === 'STATE_PLAYING') initAudio();
-    return () => { Tone.Transport.stop(); };
-  }, [gameState]);
+  const handleInteraction = () => {
+    if (engineRef.current) {
+      engineRef.current.input.mouse.requestLock();
+      if (gameState === 'MENU') setGameState('PLAYING');
+    }
+  };
 
   return (
-    <div ref={containerRef} className="w-full h-full relative cursor-crosshair">
-      <div className="absolute top-12 left-12 mix-blend-difference pointer-events-none opacity-80 z-50">
-        <h1 className="font-headline text-4xl font-black text-primary tracking-tighter uppercase mb-1">
-          REDROOM: THE LAST EXIT
-        </h1>
-        <div className="font-mono text-xs space-y-0.5 uppercase">
-          <p>DEPTH: {depth.toString().padStart(3, '0')}</p>
-          <p>SIGNAL: {gameState === 'STATE_WIN_SEQUENCE' ? 'LOST' : 'PURE'}</p>
-          <p>STATUS: {lockStatus.mode === 'LOCKED' ? 'HARDWARE LOCKED' : lockStatus.mode === 'FALLBACK' ? 'FALLBACK ACTIVE' : 'AWAITING INPUT'}</p>
-        </div>
+    <div 
+      ref={containerRef} 
+      className="w-full h-full relative overflow-hidden"
+      onClick={handleInteraction}
+    >
+      {/* HUD & DEBUG */}
+      <div className="absolute top-4 left-4 font-mono text-[10px] text-white/50 pointer-events-none space-y-1">
+        <p>FPS: {debug.fps}</p>
+        <p>POS: {debug.pos}</p>
+        <p>ROT: {debug.rot}</p>
+        <p className={debug.status === 'FALLBACK' ? 'text-red-500 animate-pulse' : ''}>
+          STATUS: {debug.status}
+        </p>
       </div>
 
-      {lockStatus.mode === 'FALLBACK' && (
-        <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-primary px-4 py-2 font-mono text-[10px] text-white z-[6000] border-2 border-white animate-pulse">
+      {debug.status === 'FALLBACK' && (
+        <div className="absolute bottom-10 left-1/2 -translate-x-1/2 bg-red-900/80 px-4 py-2 text-white font-mono text-xs border border-red-500 animate-pulse">
           PREVIEW ENVIRONMENT DETECTED — RUNNING IN MOUSE CAPTURE FALLBACK MODE
         </div>
       )}
 
-      {gameState === 'STATE_MENU' && (
-        <div className="absolute inset-0 flex items-center justify-center bg-[#ff0000] z-[5000]">
+      {gameState === 'MENU' ? (
+        <div className="absolute inset-0 flex items-center justify-center bg-black/80 z-50">
           <div className="text-center">
-            <h2 className="text-9xl font-black text-black mb-8 animate-pulse italic">REDROOM</h2>
-            <p className="text-xl font-mono text-black uppercase tracking-[0.5em] opacity-60">Click to enter the loop</p>
+            <h1 className="text-6xl font-black text-red-600 italic mb-4">REDROOM</h1>
+            <p className="text-white/60 font-mono tracking-widest animate-pulse">CLICK TO ENTER THE LOOP</p>
           </div>
         </div>
+      ) : (
+        <div className="absolute top-1/2 left-1/2 w-1 h-1 bg-white rounded-full -translate-x-1/2 -translate-y-1/2 mix-blend-difference pointer-events-none" />
       )}
-
-      {gameState === 'STATE_WIN_SEQUENCE' && (
-        <div className="absolute inset-0 flex items-center justify-center bg-white z-[6000]">
-          <div className="text-center text-black">
-            <h2 className="text-9xl font-black mb-4">THE EXIT</h2>
-            <p className="text-2xl font-mono uppercase tracking-widest opacity-80 mb-12">You have reached the void.</p>
-            <button 
-              onClick={() => window.location.reload()}
-              className="px-12 py-5 border-4 border-black font-black text-2xl uppercase hover:bg-black hover:text-white transition-all"
-            >
-              Reset Simulation
-            </button>
-          </div>
-        </div>
-      )}
-
-      <div className="absolute top-1/2 left-1/2 w-1 h-1 bg-white rounded-full -translate-x-1/2 -translate-y-1/2 mix-blend-difference pointer-events-none z-40" />
-      <div className="horror-noise opacity-10" />
+      
+      <div className="horror-noise opacity-10 pointer-events-none" />
     </div>
   );
 }
