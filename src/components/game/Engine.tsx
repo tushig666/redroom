@@ -1,4 +1,3 @@
-
 "use client";
 
 import React, { useEffect, useRef, useState, useMemo } from 'react';
@@ -191,15 +190,31 @@ export default function Engine() {
       const moveSpeed = new THREE.Vector2(playerCtrl.velocity.x, playerCtrl.velocity.z).length();
       const bob = Math.sin(Date.now() * 0.001 * (isSprinting ? 12 : 8)) * (isSprinting ? 0.08 : 0.05) * (moveSpeed / 5);
       
+      // Sound Emission Logic
+      if (moveSpeed > 0.1) {
+        let intensity = 0.2; // Walk
+        if (playerCtrl.movementState === 'CAREFUL') intensity = 0.05;
+        if (playerCtrl.movementState === 'SPRINT') intensity = 0.8;
+        systems.monster.emitSound(playerCtrl.position, intensity);
+      }
+
+      // Heartbeat sound emission
+      systems.monster.emitSound(playerCtrl.position, (systems.heart.bpm - 60) / 140);
+
+      // Clown Laughter Beacon
+      const isTrap = systems.room.currentRoom.type === RoomType.TRAP;
+      if (isTrap) {
+        systems.monster.emitSound(new THREE.Vector3(0, 4.5, 0), 2.0);
+      }
+
       // Systems Update
-      systems.monster.update(dt, playerCtrl.position, systems.heart.bpm);
+      systems.monster.update(dt, playerCtrl.position);
       monsterVisuals.update(systems.monster.position, MonsterState[systems.monster.state]);
 
-      // Clown Update (Noise Trap)
-      const isTrap = systems.room.currentRoom.type === RoomType.TRAP;
+      // Clown Update
       clownVisuals.update(isTrap);
       if (isTrap) {
-        clownVisuals.group.position.set(0, 1.8, 0); // Position in center of room
+        clownVisuals.group.position.set(0, 1.8, 0);
       }
 
       const dist = systems.monster.position.distanceTo(playerCtrl.position);
@@ -231,23 +246,27 @@ export default function Engine() {
       const prevRoom = systems.room.currentRoom;
       const outcome = prevRoom.outcomes[dir];
       
+      let transitionOffset = new THREE.Vector3(0, 0, 0);
+
+      if (dir === 'north') { playerCtrl.position.z += 15; transitionOffset.z += 15; }
+      if (dir === 'south') { playerCtrl.position.z -= 15; transitionOffset.z -= 15; }
+      if (dir === 'east') { playerCtrl.position.x -= 15; transitionOffset.x -= 15; }
+      if (dir === 'west') { playerCtrl.position.x += 15; transitionOffset.x += 15; }
+
+      // Shift monster to maintain relative grid position
+      systems.monster.onRoomTransition(transitionOffset);
+
       if (outcome === OpeningOutcome.CORRECT) {
         systems.progression.increment();
       } else if (outcome === OpeningOutcome.MONSTER) {
         systems.monster.spawn(new THREE.Vector3(0, 4.5, -5));
       } else if (outcome === OpeningOutcome.NOISE_TRAP) {
-        // Noise trap room entered - clown will be active
+        // Noise trap logic
       } else {
-        // Hide monster if we leave an encounter area
         systems.monster.hide();
       }
 
       systems.room.move(dir);
-      
-      if (dir === 'north') playerCtrl.position.z += 15;
-      if (dir === 'south') playerCtrl.position.z -= 15;
-      if (dir === 'east') playerCtrl.position.x -= 15;
-      if (dir === 'west') playerCtrl.position.x += 15;
 
       if (systems.progression.isComplete()) {
         systems.win.trigger();
