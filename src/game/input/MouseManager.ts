@@ -50,19 +50,18 @@ export class MouseManager {
   private handleLockChange = () => {
     if (document.pointerLockElement === this.element) {
       this.status = 'LOCKED';
-      console.log('[MouseManager] Pointer Lock Acquired');
     } else {
       // If we were locked and lost it, we don't automatically go to fallback
       // unless the request failed initially.
       if (this.status === 'LOCKED') {
         this.status = 'DISABLED';
-        console.log('[MouseManager] Pointer Lock Lost');
       }
     }
   };
 
   private handleLockError = () => {
-    console.warn('[MouseManager] Pointer Lock Failed. Entering Fallback Mode.');
+    // This event fires if requestPointerLock() fails.
+    // We switch to fallback mode silently.
     this.status = 'FALLBACK';
   };
 
@@ -70,16 +69,17 @@ export class MouseManager {
     if (!this.element) return;
 
     try {
+      // requestPointerLock() can return a promise in modern browsers
       const promise = this.element.requestPointerLock() as any;
       if (promise && typeof promise.catch === 'function') {
         await promise.catch((err: Error) => {
+          // Silent fallback to avoid triggering Next.js error overlays
           this.status = 'FALLBACK';
-          console.error('[MouseManager] Lock rejected:', err.message);
         });
       }
     } catch (e: any) {
+      // Catch synchronous SecurityErrors (e.g. sandbox restrictions)
       this.status = 'FALLBACK';
-      console.warn('[MouseManager] Security/Sandbox restriction:', e.message);
     }
   }
 
