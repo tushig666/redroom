@@ -29,11 +29,10 @@ export default function Engine() {
     bpm: 70, 
     deathReason: '',
     roomType: 'MAIN',
-    roomX: 0,
-    roomZ: 0,
     roomId: '0,0',
-    parentId: 'NONE',
-    moveState: 'IDLE'
+    monsterDist: 0,
+    monsterState: 'HIDDEN',
+    attacked: false
   });
 
   const systems = useMemo(() => ({
@@ -129,7 +128,6 @@ export default function Engine() {
     const cur = room.currentRoom;
     engineRef.current.roomGroup.add(createRoomMeshes(cur, 0, 0));
     
-    // Only render neighbor rooms if an opening exists
     if (cur.outcomes.north !== OpeningOutcome.NONE) 
       engineRef.current.roomGroup.add(createRoomMeshes(room.getOrCreateRoom(cur.x, cur.z - 1, cur.progressAtCreation, cur), 0, -20));
     if (cur.outcomes.south !== OpeningOutcome.NONE) 
@@ -193,11 +191,13 @@ export default function Engine() {
       monsterVisuals.update(systems.monster.position, MonsterState[systems.monster.state]);
 
       const dist = systems.monster.position.distanceTo(playerCtrl.position);
-      const isVisible = systems.monster.state !== MonsterState.HIDDEN && dist < 12;
-      systems.heart.update(dt, systems.monster.state !== MonsterState.HIDDEN ? Math.max(0, 1 - (dist / 15)) : 0, isVisible);
+      const isVisible = systems.monster.state !== MonsterState.HIDDEN;
+      systems.heart.update(dt, isVisible ? Math.max(0, 1 - (dist / 15)) : 0, isVisible);
       
       if (systems.heart.isHeartFailure) systems.death.trigger("HEART FAILURE");
-      if (dist < 1.2 && systems.monster.state !== MonsterState.HIDDEN) systems.death.trigger("YOU WERE CONSUMED");
+      if (systems.monster.state === MonsterState.ATTACKING) {
+        systems.death.trigger("YOU WERE CONSUMED");
+      }
 
       threeCamera.position.copy(playerCtrl.position);
       threeCamera.position.y += bob;
@@ -208,11 +208,10 @@ export default function Engine() {
         bpm: Math.round(systems.heart.bpm),
         deathReason: systems.death.deathReason,
         roomType: RoomType[systems.room.currentRoom.type],
-        roomX: systems.room.currentRoom.x,
-        roomZ: systems.room.currentRoom.z,
         roomId: systems.room.currentRoom.id,
-        parentId: systems.room.currentRoom.parentId || 'NONE',
-        moveState: playerCtrl.movementState
+        monsterDist: parseFloat(dist.toFixed(2)),
+        monsterState: MonsterState[systems.monster.state],
+        attacked: systems.monster.state === MonsterState.ATTACKING
       });
     });
 
@@ -220,16 +219,17 @@ export default function Engine() {
       const prevRoom = systems.room.currentRoom;
       const outcome = prevRoom.outcomes[dir];
       
-      // Logic: Only correct door advances progress
       if (outcome === OpeningOutcome.CORRECT) {
         systems.progression.increment();
       } else if (outcome === OpeningOutcome.MONSTER) {
         systems.monster.spawn(new THREE.Vector3(0, 4.5, -5));
+      } else {
+        // Hide monster if we leave an encounter area
+        systems.monster.hide();
       }
 
       systems.room.move(dir);
       
-      // Teleport player to safe opposite side
       if (dir === 'north') playerCtrl.position.z += 15;
       if (dir === 'south') playerCtrl.position.z -= 15;
       if (dir === 'east') playerCtrl.position.x -= 15;
@@ -277,11 +277,13 @@ export default function Engine() {
           
           <div className="absolute top-8 left-1/2 -translate-x-1/2 flex flex-col items-center gap-1 pointer-events-none">
              <div className="px-4 py-1 bg-black/80 text-red-500 font-mono text-xs border border-red-900/50">
-               DEBUG: {uiData.roomType} | ID: {uiData.roomId} | PARENT: {uiData.parentId}
+               MONSTER: {uiData.monsterState} | DIST: {uiData.monsterDist}m
              </div>
-             <div className="px-4 py-1 bg-black/80 text-white font-mono text-[10px] tracking-widest uppercase">
-               STATE: {uiData.moveState}
-             </div>
+             {uiData.attacked && (
+               <div className="px-4 py-1 bg-red-600 text-white font-mono text-xs uppercase animate-pulse">
+                 ATTACK TRIGGERED
+               </div>
+             )}
           </div>
         </>
       )}
@@ -298,7 +300,7 @@ export default function Engine() {
           <div className="text-center">
             <h1 className="text-6xl font-black text-red-600 mb-4 uppercase">{uiData.deathReason}</h1>
             <p className="text-8xl font-black text-white mb-8">TERMINATED</p>
-            <p className="text-white/40 font-headline tracking-widest animate-pulse">RETRY</p>
+            <p className="text-white/40 font-headline tracking-widest animate-pulse uppercase">RETRY</p>
           </div>
         </div>
       )}
