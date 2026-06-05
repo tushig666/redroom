@@ -107,6 +107,8 @@ export default function Engine() {
     const handleMouseMove = (e: MouseEvent) => {
       if (!isLocked) return;
       const sensitivity = 0.002;
+      // Use movementX/Y which works best with pointer lock, 
+      // but also works in most modern browsers even without it.
       euler.current.y -= e.movementX * sensitivity;
       euler.current.x -= e.movementY * sensitivity;
       euler.current.x = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, euler.current.x));
@@ -217,7 +219,24 @@ export default function Engine() {
   }, [psychLevel]);
 
   const lockPointer = () => {
-    containerRef.current?.requestPointerLock();
+    try {
+      // In sandboxed environments, requestPointerLock might be blocked.
+      // We wrap it in a try-catch to avoid crashing the app.
+      const element = containerRef.current;
+      if (element) {
+        const promise = element.requestPointerLock();
+        // Newer browsers return a promise that rejects if the lock fails
+        if (promise && typeof promise.catch === 'function') {
+          promise.catch(() => {
+            // If the promise fails, we still "unlock" the game UI for the prototype
+            setIsLocked(true);
+          });
+        }
+      }
+    } catch (e) {
+      // Fallback for sandboxed frames that don't allow pointer lock
+      setIsLocked(true);
+    }
   };
 
   return (
