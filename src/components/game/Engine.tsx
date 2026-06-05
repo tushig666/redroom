@@ -21,6 +21,11 @@ import { WinSystem } from '@/game/systems/WinSystem';
 export default function Engine() {
   const containerRef = useRef<HTMLDivElement>(null);
   const [gameState, setGameState] = useState<'MENU' | 'PLAYING' | 'DEAD' | 'WON'>('MENU');
+  
+  // Transition Lock State
+  const isTransitioning = useRef(false);
+  const lastActivationTime = useRef(0);
+
   const [uiData, setUiData] = useState({ 
     progress: 'ROOM 1/6', 
     bpm: 70, 
@@ -151,6 +156,7 @@ export default function Engine() {
     return () => {
       gameLoop.stop();
       input.dispose();
+      window.removeResizeListener?.();
       window.removeEventListener('resize', handleResize);
       renderer.dispose();
     };
@@ -209,6 +215,19 @@ export default function Engine() {
       return;
     }
 
+    // TRANSITION GUARD
+    if (isTransitioning.current) {
+      console.log('[Engine] Transition Lock Active - Ignoring Interaction');
+      return;
+    }
+
+    // COOLDOWN GUARD
+    const now = Date.now();
+    if (now - lastActivationTime.current < 1500) {
+      console.log('[Engine] Door Cooldown Active');
+      return;
+    }
+
     const interaction = systems.door.checkInteraction(
       engineRef.current.player.position,
       engineRef.current.camera.getDirection(),
@@ -216,12 +235,18 @@ export default function Engine() {
     );
 
     if (interaction !== null) {
+      console.log(`[Engine] DOOR ENTERED: ${interaction.key.toUpperCase()} | TYPE: ${DoorOutcome[interaction.outcome]}`);
       processDoorOutcome(interaction.outcome, interaction.key);
     }
   };
 
   const processDoorOutcome = (outcome: DoorOutcome, directionKey: string) => {
     const prevRoom = systems.room.currentRoom;
+    
+    // LOCK TRANSITIONS
+    isTransitioning.current = true;
+    lastActivationTime.current = Date.now();
+    console.log('[Engine] TRANSITION LOCK ENABLED');
 
     switch (outcome) {
       case DoorOutcome.CORRECT:
@@ -257,24 +282,36 @@ export default function Engine() {
         resetPlayer(directionKey);
         break;
     }
+
+    console.log(`[Engine] ROOM GENERATED: ${systems.room.currentRoom.id}`);
     buildRoomVisuals();
+
+    // UNLOCK AFTER DELAY
+    setTimeout(() => {
+      isTransitioning.current = false;
+      console.log('[Engine] TRANSITION LOCK DISABLED');
+    }, 1000);
   };
 
   const resetPlayer = (directionKey: string) => {
     if (!engineRef.current) return;
     
     const player = engineRef.current.player;
-    const spawnDist = 6.0; // Units away from the wall
+    // Spawn 5 units inside the room to be safe from doorway triggers (9.5 - 5 = 4.5 dist to door)
+    const spawnPos = 4.5; 
 
-    // Reset to center then offset based on the door used
+    // Reset to center
     player.position.set(0, 1.7, 0);
 
-    if (directionKey === 'north') player.position.z = -spawnDist;
-    if (directionKey === 'south') player.position.z = spawnDist;
-    if (directionKey === 'east') player.position.x = spawnDist;
-    if (directionKey === 'west') player.position.x = -spawnDist;
+    // Inverse Cardinal logic for "walking through"
+    // e.g. North click -> Appear at South end facing center
+    if (directionKey === 'north') player.position.z = spawnPos;
+    if (directionKey === 'south') player.position.z = -spawnPos;
+    if (directionKey === 'east') player.position.x = -spawnPos;
+    if (directionKey === 'west') player.position.x = spawnPos;
 
     systems.monster.hide();
+    console.log(`[Engine] PLAYER SPAWNED AT SAFE POSITION: ${player.position.x}, ${player.position.z}`);
   };
 
   return (
@@ -345,3 +382,4 @@ export default function Engine() {
     </div>
   );
 }
+
