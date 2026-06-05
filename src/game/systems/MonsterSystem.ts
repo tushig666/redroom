@@ -20,7 +20,7 @@ export class MonsterSystem {
   
   private targetPosition = new THREE.Vector3();
   private lastKnownSoundPosition = new THREE.Vector3();
-  private speed: number = 2.0;
+  private speed: number = 1.5;
   private readonly MONSTER_HEIGHT = 4.5; 
   public attackRange: number = 2.8; 
 
@@ -41,14 +41,14 @@ export class MonsterSystem {
 
     switch (this.state) {
       case MonsterState.IDLE:
-        this.speed = 2.0;
+        this.speed = 1.5;
         if (this.position.distanceTo(this.targetPosition) < 1.0) {
           this.pickNewPatrolPoint();
         }
         break;
 
       case MonsterState.SEARCHING:
-        this.speed = 3.5;
+        this.speed = 2.625;
         this.searchTimer -= dt;
         
         if (this.isListening) {
@@ -74,7 +74,7 @@ export class MonsterSystem {
         break;
 
       case MonsterState.HUNTING:
-        this.speed = 7.5;
+        this.speed = 5.625;
         this.targetPosition.copy(playerPos);
         
         // If player gets too far and is quiet, lose track
