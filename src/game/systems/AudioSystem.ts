@@ -34,7 +34,7 @@ export class AudioSystem {
   private initializing = false;
 
   constructor() {
-    // Empty constructor to be SSR safe
+    console.log("AUDIO SYSTEM CREATED");
   }
 
   /**
@@ -44,19 +44,25 @@ export class AudioSystem {
   public async init() {
     if (this.initialized || this.initializing) return;
     this.initializing = true;
+    console.log("AUDIO INIT STARTED");
     
     try {
       await Tone.start();
+      console.log("TONE START SUCCESS");
+      console.log("Tone.context.state:", Tone.context.state);
       
       // 1. Background Theme Chain
       this.bgFilter = new Tone.Filter(1000, "lowpass").toDestination();
       this.bgDistort = new Tone.Distortion(0.15).connect(this.bgFilter);
       this.bgReverb = new Tone.Reverb({ decay: 5, wet: 0.4 }).connect(this.bgDistort);
       
+      console.log("LOADING:", AUDIO_CONFIG.BACKGROUND);
       this.bgPlayer = new Tone.Player({
         url: AUDIO_CONFIG.BACKGROUND,
         loop: true,
-        volume: -15
+        volume: -15,
+        onload: () => console.log("LOAD SUCCESS:", AUDIO_CONFIG.BACKGROUND),
+        onerror: (err) => console.error("LOAD FAILED:", AUDIO_CONFIG.BACKGROUND, err)
       }).connect(this.bgReverb);
 
       // 2. Clown Audio Chain
@@ -68,10 +74,13 @@ export class AudioSystem {
         maxDistance: 30
       }).toDestination();
       
+      console.log("LOADING:", AUDIO_CONFIG.CLOWN);
       this.clownPlayer = new Tone.Player({
         url: AUDIO_CONFIG.CLOWN,
         loop: true,
-        volume: -5
+        volume: -5,
+        onload: () => console.log("LOAD SUCCESS:", AUDIO_CONFIG.CLOWN),
+        onerror: (err) => console.error("LOAD FAILED:", AUDIO_CONFIG.CLOWN, err)
       }).connect(this.clownPanner);
 
       // 3. Threadling Audio Chain
@@ -79,10 +88,13 @@ export class AudioSystem {
         panningModel: 'HRTF'
       }).toDestination();
       
+      console.log("LOADING:", AUDIO_CONFIG.THREADLING);
       this.monsterPlayer = new Tone.Player({
         url: AUDIO_CONFIG.THREADLING,
         loop: false,
-        volume: 0
+        volume: 0,
+        onload: () => console.log("LOAD SUCCESS:", AUDIO_CONFIG.THREADLING),
+        onerror: (err) => console.error("LOAD FAILED:", AUDIO_CONFIG.THREADLING, err)
       }).connect(this.monsterPanner);
 
       // Start background if loaded
