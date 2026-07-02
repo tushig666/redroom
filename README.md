@@ -1,22 +1,22 @@
 # REDROOM: THE LAST EXIT
 
 <p align="center">
-  <img src="images/redroom monster .png" width="700">
+  <img alt="Threadling" src="https://raw.githubusercontent.com/tushig666/redroom/main/images/redroom-monster.png" width="700">
 </p>
 
 ## English
 
-A first-person psychological horror experience set inside an endless labyrinth of living red rooms.
+REDROOM: THE LAST EXIT is a first-person psychological horror game set inside an endless labyrinth of living red rooms.
 
-Every room contains four possible paths.
+Every room presents four possible paths.
 
-Only one moves you closer to freedom.
+Only one leads closer to freedom.
 
 The others hide something far worse.
 
 ### The Maze
 
-The REDROOM is an infinite, shifting nightmare.
+The REDROOM is an infinite nightmare.
 
 Each room contains exactly:
 
@@ -27,7 +27,7 @@ Each room contains exactly:
 
 The player never knows which door is safe.
 
-Every decision is pure chance.
+Every choice is pure chance.
 
 ### The Threadling
 
@@ -35,19 +35,19 @@ The Threadling is a blind predator that hunts entirely through sound.
 
 Once awakened, it becomes part of the maze itself.
 
-Walls do not stop it.
+Walls cannot stop it.
 
-Distance and silence are your only hope.
+Distance and silence are your only protection.
 
 <p align="center">
-  <img src="images/redroom noise trap .png" width="700">
+  <img alt="Carnival Caller" src="https://raw.githubusercontent.com/tushig666/redroom/main/images/redroom-noise-trap.png" width="700">
 </p>
 
 ### Noise Traps
 
 Some rooms contain the Carnival Caller.
 
-Its laughter echoes through the labyrinth and attracts the Threadling to your location.
+Its laughter echoes throughout the labyrinth and attracts the Threadling to your location.
 
 The moment you hear it, you know something is coming.
 
@@ -71,15 +71,15 @@ Reach the final white room.
 
 Escape the REDROOM.
 
-Or become another lost soul inside the maze.
+Or become another lost soul trapped inside the maze.
 
 > "Every door might be the end of me."
 
 ---
 
-# 日本語
+## 日本語
 
-終わりのない赤い迷宮を舞台にした、一人称視点のサイコロジカルホラーゲームです。
+REDROOM: THE LAST EXIT は、終わりのない赤い迷宮を舞台にした一人称視点のサイコロジカルホラーゲームです。
 
 すべての部屋には4つの出口があります。
 
