@@ -1,7 +1,7 @@
 # REDROOM: THE LAST EXIT
 
 <p align="center">
-  <img src="images/redroom monster.png" width="700">
+  <img src="images/redroom monster .png" width="700">
 </p>
 
 ## English
@@ -40,7 +40,7 @@ Walls do not stop it.
 Distance and silence are your only hope.
 
 <p align="center">
-  <img src="images/redroom noise trap.png" width="700">
+  <img src="images/redroom noise trap .png" width="700">
 </p>
 
 ### Noise Traps
