@@ -7,7 +7,6 @@ import * as THREE from 'three';
 /**
  * AudioSystem.ts
  * Centralized audio infrastructure for REDROOM.
- * Handles local assets, spatial audio, and randomized monster cues.
  */
 
 const AUDIO_CONFIG = {
@@ -27,6 +26,7 @@ export class AudioSystem {
   private monsterPanner: Tone.Panner3D | null = null;
 
   private monsterTimer: number = 10;
+
   private initialized = false;
   private initializing = false;
 
@@ -34,146 +34,266 @@ export class AudioSystem {
     console.log("AUDIO SYSTEM CREATED");
   }
 
-  /**
-   * Initializes audio context and nodes safely on the client.
-   * This must be triggered by a user gesture.
-   */
   public async init() {
     if (this.initialized || this.initializing) return;
+
     this.initializing = true;
-    console.log("AUDIO INIT STARTED");
 
     try {
-      // 1. Start the audio context
       await Tone.start();
-      console.log("TONE START SUCCESS. Context state:", Tone.context.state);
 
-      // 2. Setup Background Theme (Muffled, distant)
-      this.bgFilter = new Tone.Filter(800, "lowpass").toDestination();
+      console.log(
+        "TONE START SUCCESS:",
+        Tone.context.state
+      );
+
+      // =====================
+      // BACKGROUND MUSIC
+      // =====================
+
+      this.bgFilter = new Tone.Filter(
+        800,
+        "lowpass"
+      ).toDestination();
+
       this.bgPlayer = new Tone.Player({
         url: AUDIO_CONFIG.BACKGROUND,
         loop: true,
         volume: -20,
+
         onload: () => {
-          console.log("LOAD SUCCESS: BACKGROUND");
-          if (this.bgPlayer) this.bgPlayer.start();
+          console.log("BACKGROUND LOADED");
+
+          if (this.bgPlayer) {
+            this.bgPlayer.start();
+          }
         },
-        onerror: () => console.warn("BACKGROUND AUDIO NOT FOUND")
+
+        onerror: (e) => {
+          console.warn(
+            "BACKGROUND FAILED:",
+            e
+          );
+        },
       }).connect(this.bgFilter);
 
-      // 3. Setup Clown Audio (Spatialized laughter)
+      // =====================
+      // CLOWN AUDIO
+      // 3X LOUDER
+      // =====================
+
       this.clownPanner = new Tone.Panner3D({
-        panningModel: 'HRTF',
-        rolloffFactor: 2,
+        panningModel: "HRTF",
+        rolloffFactor: 1.2,
         refDistance: 1,
-        maxDistance: 20
+        maxDistance: 40,
       }).toDestination();
+
       this.clownPlayer = new Tone.Player({
         url: AUDIO_CONFIG.CLOWN,
+
         loop: true,
-        volume: -5,
-        onload: () => console.log("LOAD SUCCESS: CLOWN"),
-        onerror: () => console.warn("CLOWN AUDIO NOT FOUND")
+
+        // OLD: -5
+        // NEW: +5 (MUCH LOUDER)
+        volume: 5,
+
+        onload: () => {
+          console.log("CLOWN LOADED");
+        },
+
+        onerror: (e) => {
+          console.warn(
+            "CLOWN FAILED:",
+            e
+          );
+        },
       }).connect(this.clownPanner);
 
-      // 4. Setup Threadling Audio (Intermittent spatial cues)
+      // =====================
+      // THREADLING AUDIO
+      // 3X LOUDER
+      // =====================
+
       this.monsterPanner = new Tone.Panner3D({
-        panningModel: 'HRTF'
+        panningModel: "HRTF",
+
+        rolloffFactor: 0.8,
+
+        refDistance: 1,
+
+        maxDistance: 60,
       }).toDestination();
+
       this.monsterPlayer = new Tone.Player({
         url: AUDIO_CONFIG.THREADLING,
+
         loop: false,
-        volume: 0,
-        onload: () => console.log("LOAD SUCCESS: THREADLING"),
-        onerror: () => console.warn("THREADLING AUDIO NOT FOUND")
+
+        // OLD: 0
+        // NEW: +8
+        volume: 8,
+
+        onload: () => {
+          console.log("THREADLING LOADED");
+        },
+
+        onerror: (e) => {
+          console.warn(
+            "THREADLING FAILED:",
+            e
+          );
+        },
       }).connect(this.monsterPanner);
 
       this.initialized = true;
-    } catch (error) {
-      console.error("AUDIO SYSTEM INIT FAILED:", error);
+
+      console.log("AUDIO INIT COMPLETE");
+    } catch (err) {
+      console.error(
+        "AUDIO INIT FAILED:",
+        err
+      );
     } finally {
       this.initializing = false;
     }
   }
 
-  /**
-   * Updates spatial positions and triggers randomized audio events.
-   */
-  public update(dt: number, data: {
-    isMenu: boolean,
-    inTrapRoom: boolean,
-    monsterDist: number,
-    monsterPos: THREE.Vector3,
-    playerPos: THREE.Vector3,
-    playerDir: THREE.Vector3
-  }) {
+  public update(
+    dt: number,
+    data: {
+      isMenu: boolean;
+      inTrapRoom: boolean;
+      monsterDist: number;
+      monsterPos: THREE.Vector3;
+      playerPos: THREE.Vector3;
+      playerDir: THREE.Vector3;
+    }
+  ) {
     if (!this.initialized) return;
 
-    // A. Sync Listener Position
+    // =====================
+    // LISTENER UPDATE
+    // =====================
+
     try {
       Tone.getContext().listener.set({
         positionX: data.playerPos.x,
         positionY: data.playerPos.y,
         positionZ: data.playerPos.z,
+
         forwardX: data.playerDir.x,
         forwardY: data.playerDir.y,
         forwardZ: data.playerDir.z,
+
         upX: 0,
         upY: 1,
-        upZ: 0
+        upZ: 0,
       });
-    } catch (e) {
-      // Listener sync failed (unsupported browser or context issues)
-    }
+    } catch (e) {}
 
-    // B. Background Modulation
+    // =====================
+    // BACKGROUND FILTER
+    // =====================
+
     if (this.bgFilter) {
-      const targetFreq = data.isMenu ? 2000 : 800;
-      this.bgFilter.frequency.rampTo(targetFreq, 2);
+      const targetFreq = data.isMenu
+        ? 2000
+        : 800;
+
+      this.bgFilter.frequency.rampTo(
+        targetFreq,
+        2
+      );
     }
 
-    // C. Noise Trap Room (Clown)
-    if (this.clownPlayer && this.clownPanner && this.clownPlayer.loaded) {
+    // =====================
+    // CLOWN ROOM
+    // =====================
+
+    if (
+      this.clownPlayer &&
+      this.clownPanner &&
+      this.clownPlayer.loaded
+    ) {
       if (data.inTrapRoom) {
-        if (this.clownPlayer.state !== 'started') {
+        if (
+          this.clownPlayer.state !==
+          "started"
+        ) {
           this.clownPlayer.start();
         }
+
         this.clownPanner.set({
           positionX: 0,
           positionY: 1.8,
-          positionZ: 0
+          positionZ: 0,
         });
       } else {
-        if (this.clownPlayer.state === 'started') {
+        if (
+          this.clownPlayer.state ===
+          "started"
+        ) {
           this.clownPlayer.stop("+0.5");
         }
       }
     }
 
-    // D. Threadling Cues (Intermittent)
-    if (this.monsterPlayer && this.monsterPanner && this.monsterPlayer.loaded) {
+    // =====================
+    // THREADLING SOUNDS
+    // =====================
+
+    if (
+      this.monsterPlayer &&
+      this.monsterPanner &&
+      this.monsterPlayer.loaded
+    ) {
       this.monsterTimer -= dt;
+
       if (this.monsterTimer <= 0) {
-        const dist = data.monsterDist;
-        
-        // Define frequency based on proximity
-        let minInt = 10, maxInt = 25;
-        if (dist < 10) { minInt = 3; maxInt = 7; }
-        else if (dist < 25) { minInt = 6; maxInt = 15; }
+        const dist =
+          data.monsterDist;
 
-        this.monsterTimer = Math.random() * (maxInt - minInt) + minInt;
+        let minInt = 10;
+        let maxInt = 25;
 
-        if (this.monsterPlayer.state !== 'started') {
+        if (dist < 10) {
+          minInt = 2;
+          maxInt = 5;
+        } else if (dist < 25) {
+          minInt = 4;
+          maxInt = 10;
+        }
+
+        this.monsterTimer =
+          Math.random() *
+            (maxInt - minInt) +
+          minInt;
+
+        if (
+          this.monsterPlayer.state !==
+          "started"
+        ) {
           this.monsterPanner.set({
-            positionX: data.monsterPos.x,
-            positionY: data.monsterPos.y,
-            positionZ: data.monsterPos.z
+            positionX:
+              data.monsterPos.x,
+
+            positionY:
+              data.monsterPos.y,
+
+            positionZ:
+              data.monsterPos.z,
           });
-          
-          // Apply proximity volume scaling
-          const vol = Math.max(-40, -(dist * 1.5));
-          this.monsterPlayer.volume.value = vol;
-          
+
+          // MUCH LOUDER THAN BEFORE
+          const vol = Math.max(
+            -10,
+            15 - dist * 0.5
+          );
+
+          this.monsterPlayer.volume.value =
+            vol;
+
           this.monsterPlayer.start();
         }
       }
